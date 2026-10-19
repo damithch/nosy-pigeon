@@ -1,0 +1,47 @@
+name: Nosy Pigeon
+
+on:
+  schedule:
+    # Every 10 minutes, day and night (UTC; offset from :00 because GitHub delays top-of-hour runs).
+    # Public repo, so Actions minutes are free.
+    - cron: "3-53/10 * * * *"
+  workflow_dispatch:   # lets you run it manually from the Actions tab
+
+permissions:
+  contents: write      # needed to commit seen.json back
+
+concurrency:
+  group: pigeon
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Check sites and send pings
+        env:
+          PIGEON_CONFIG: ${{ secrets.PIGEON_CONFIG }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+          WHATSAPP_APIKEY: ${{ secrets.WHATSAPP_APIKEY }}
+        run: python pigeon.py
+
+      - name: Save what the pigeon saw
+        run: |
+          git config user.name "nosy-pigeon"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add seen.json
+          git diff --cached --quiet || git commit -m "chore: pigeon memory [skip ci]"
+          git push

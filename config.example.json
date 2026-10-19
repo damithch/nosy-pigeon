@@ -1,0 +1,44 @@
+{
+  "sources": {
+    "a": {
+      "type": "rss",
+      "label": "Some feed",
+      "url": "https://example.com/feed.xml",
+      "field_labels": {
+        "org": "Org",
+        "place": "Place",
+        "kind": "Kind"
+      },
+      "extra_labels": [
+        "Description"
+      ]
+    },
+    "b": {
+      "type": "table",
+      "label": "Some page",
+      "url": "https://example.org/list",
+      "enabled": false,
+      "onclick_fn": "openItem",
+      "link_template": "https://example.org/item?rid={rid}&ac={ac}&jc={jc}&ec={ec}"
+    }
+  },
+  "title_include": [
+    "pigeon",
+    "crumb"
+  ],
+  "seniority_exclude": [
+    "giant"
+  ],
+  "title_exclude": [
+    "cat"
+  ],
+  "body_exclude": [
+    "no seeds"
+  ],
+  "tech_keywords": [
+    "breadcrumbs",
+    "sunflower"
+  ],
+  "allowed_locations": [],
+  "max_age_days": 14
+}
