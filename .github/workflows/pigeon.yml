@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: main   # always the latest code and memory, even on re-runs
 
       - uses: actions/setup-python@v6
         with:
@@ -43,5 +45,11 @@ jobs:
           git config user.name "nosy-pigeon"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add seen.json
-          git diff --cached --quiet || git commit -m "chore: pigeon memory [skip ci]"
-          git push
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: pigeon memory [skip ci]"
+          # main may have moved while we flew: rebase and retry
+          for i in 1 2 3; do
+            git pull --rebase -q origin main && git push -q origin main && exit 0
+            sleep 5
+          done
+          exit 1
