@@ -4,7 +4,7 @@ on:
   schedule:
     # Every 10 minutes, day and night (UTC; offset from :00 because GitHub delays top-of-hour runs).
     # Public repo, so Actions minutes are free.
-    - cron: "3-53/10 * * * *"
+    - cron: "4-54/10 * * * *"
   workflow_dispatch:   # lets you run it manually from the Actions tab
 
 permissions:
