@@ -396,6 +396,42 @@ def message_lines(item, tags, label, bold):
     return lines
 
 
+def telegram_text(token, chat, text):
+    """Send HTML text to every chat id in TELEGRAM_CHAT_ID ("111,222"). True if any got it."""
+    ok_any = False
+    for i, cid in enumerate(c.strip() for c in chat.split(",") if c.strip()):
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": cid, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
+            timeout=20,
+        )
+        if r.ok:
+            ok_any = True
+        else:  # recipient number only, never the id: logs are public
+            print(f"  telegram recipient {i + 1}: HTTP {r.status_code}", file=sys.stderr)
+    return ok_any
+
+
+def roll_call(cfg):
+    """Tell the perch which windows the pigeon is watching (names come only from the secret config)."""
+    token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+    if not (token and chat):
+        sys.exit("roll call needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
+    boards, companies = [], []
+    for name, src in cfg.get("sources", {}).items():
+        if not src.get("enabled", True):
+            continue
+        is_company = src["type"] in COMPANY_TYPES or src.get("company")
+        (companies if is_company else boards).append(html.escape(src.get("label", name)))
+    lines = ["🐦 <b>Nosy Pigeon roll call</b>", f"Watching {len(boards) + len(companies)} places.", ""]
+    if boards:
+        lines += ["<b>Job boards</b> (every 5 min)"] + [f"• {b}" for b in boards] + [""]
+    if companies:
+        lines += [f"<b>Companies</b> ({len(companies)}, about hourly)"] + [f"• {c}" for c in sorted(companies, key=str.lower)]
+    ok = telegram_text(token, chat, "\n".join(lines))
+    print(f"roll call: {len(boards)} boards, {len(companies)} companies, sent={ok}")
+
+
 def send_telegram(item, tags, label):
     token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
     if not (token and chat):
@@ -404,20 +440,7 @@ def send_telegram(item, tags, label):
     esc = {k: e(v) if isinstance(v, str) else v for k, v in item.items()}
     lines = message_lines(esc, [e(t) for t in tags], e(label), lambda s: f"<b>{s}</b>")
     lines.append(f'🔗 <a href="{e(item["link"])}">Open</a>')
-    # TELEGRAM_CHAT_ID may hold several ids separated by commas: "111,222"
-    ok_any = False
-    for i, cid in enumerate(c.strip() for c in chat.split(",") if c.strip()):
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": cid, "text": "\n".join(lines), "parse_mode": "HTML",
-                  "disable_web_page_preview": True},
-            timeout=20,
-        )
-        if r.ok:
-            ok_any = True
-        else:  # recipient number only, never the id: logs are public
-            print(f"  telegram recipient {i + 1}: HTTP {r.status_code}", file=sys.stderr)
-    return ok_any
+    return telegram_text(token, chat, "\n".join(lines))
 
 
 def send_discord(item, tags, label):
@@ -465,11 +488,15 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--file", action="append", default=[], metavar="NAME=PATH")
     ap.add_argument("--all", action="store_true", help="check every source now, ignoring intervals")
+    ap.add_argument("--roll-call", action="store_true", help="send the list of watched places to Telegram and stop")
     args = ap.parse_args()
     files = dict(f.split("=", 1) for f in args.file)
     verbose = args.verbose or args.dry_run
 
     cfg = load_config()
+    if args.roll_call:
+        roll_call(cfg)
+        return
     labels, now_min = {}, int(time.time() // 60)
     jobs = []
     for i, (name, src) in enumerate(cfg.get("sources", {}).items(), 1):

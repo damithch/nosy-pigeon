@@ -5,7 +5,12 @@ on:
     # Every 10 minutes, day and night (UTC; offset from :00 because GitHub delays top-of-hour runs).
     # Public repo, so Actions minutes are free.
     - cron: "4-54/10 * * * *"
-  workflow_dispatch:   # lets you run it manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      roll_call:
+        description: Send the list of watched places to Telegram instead of checking
+        type: boolean
+        default: false
 
 permissions:
   contents: write      # needed to commit seen.json back
@@ -38,7 +43,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           WHATSAPP_APIKEY: ${{ secrets.WHATSAPP_APIKEY }}
-        run: python pigeon.py
+        run: python pigeon.py ${{ inputs.roll_call && '--roll-call' || '' }}
 
       - name: Save what the pigeon saw
         run: |
