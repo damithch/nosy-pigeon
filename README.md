@@ -44,7 +44,7 @@ Repo secrets (**Settings → Secrets and variables → Actions**):
 | Secret | Perch |
 |---|---|
 | `PIGEON_CONFIG` | the secret map (required) |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Telegram (home perch) |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Telegram (home perch; several chat ids allowed, comma-separated) |
 | `DISCORD_WEBHOOK_URL` | Discord (optional) |
 | `WHATSAPP_PHONE`, `WHATSAPP_APIKEY` | WhatsApp via CallMeBot (optional) |
 

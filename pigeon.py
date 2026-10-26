@@ -224,15 +224,20 @@ def send_telegram(item, tags, label):
     esc = {k: e(v) if isinstance(v, str) else v for k, v in item.items()}
     lines = message_lines(esc, [e(t) for t in tags], e(label), lambda s: f"<b>{s}</b>")
     lines.append(f'🔗 <a href="{e(item["link"])}">Open</a>')
-    r = requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat, "text": "\n".join(lines), "parse_mode": "HTML",
-              "disable_web_page_preview": True},
-        timeout=20,
-    )
-    if not r.ok:
-        print(f"  telegram: HTTP {r.status_code}", file=sys.stderr)
-    return r.ok
+    # TELEGRAM_CHAT_ID may hold several ids separated by commas: "111,222"
+    ok_any = False
+    for i, cid in enumerate(c.strip() for c in chat.split(",") if c.strip()):
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": cid, "text": "\n".join(lines), "parse_mode": "HTML",
+                  "disable_web_page_preview": True},
+            timeout=20,
+        )
+        if r.ok:
+            ok_any = True
+        else:  # recipient number only, never the id: logs are public
+            print(f"  telegram recipient {i + 1}: HTTP {r.status_code}", file=sys.stderr)
+    return ok_any
 
 
 def send_discord(item, tags, label):
