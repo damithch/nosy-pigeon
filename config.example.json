@@ -20,6 +20,46 @@
       "enabled": false,
       "onclick_fn": "openItem",
       "link_template": "https://example.org/item?rid={rid}&ac={ac}&jc={jc}&ec={ec}"
+    },
+    "c": {
+      "type": "lever",
+      "label": "Some nest",
+      "company": "some-nest",
+      "location_any": [
+        "colombo"
+      ]
+    },
+    "d": {
+      "type": "workable",
+      "label": "Another nest",
+      "company": "another-nest"
+    },
+    "e": {
+      "type": "smartrecruiters",
+      "label": "Big nest",
+      "company": "bignest1",
+      "country": "lk"
+    },
+    "f": {
+      "type": "workday",
+      "label": "Tall nest",
+      "host": "tallnest.wd3.myworkdayjobs.com",
+      "tenant": "tallnest",
+      "site": "Careers",
+      "search": "Colombo"
+    },
+    "g": {
+      "type": "links",
+      "label": "Tree nest",
+      "url": "https://example.net/careers",
+      "pattern": "/careers/\\d+/",
+      "title_from": "slug",
+      "every_min": 60
+    },
+    "h": {
+      "type": "jsonld",
+      "label": "Roof nest",
+      "url": "https://example.org/careers"
     }
   },
   "title_include": [
@@ -40,5 +80,12 @@
     "sunflower"
   ],
   "allowed_locations": [],
-  "max_age_days": 14
+  "max_age_days": 14,
+  "company_title_require": [
+    "engineer",
+    "developer",
+    "devops",
+    "cloud",
+    "software"
+  ]
 }

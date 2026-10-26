@@ -27,14 +27,22 @@ This pigeon works the same way. It doesn't search everywhere; it watches the rig
 The pigeon keeps its rooftops secret. Its real map lives in a repo secret called **`PIGEON_CONFIG`** (a JSON string), so nobody else can see where it flies.
 
 `config.example.json` shows the shape of the map:
-- `sources`: windows to watch (`rss` feeds or `table` pages). Close one with `"enabled": false`.
+- `sources`: windows to watch. Close one with `"enabled": false`. Kinds of window:
+  - `rss` feeds and `table` pages: busy rooftops, checked every flight
+  - `lever`, `workable`, `smartrecruiters`, `workday`: nests that publish their own feed (needs `company`, Workday also `host`/`tenant`/`site`)
+  - `links`: any page; crumbs are links matching `pattern`, titled from the link text or the link itself (`"title_from": "slug"`)
+  - `jsonld`: pages that describe their crumbs in schema.org JSON-LD
+  - per window: `location_any` (only crumbs from these places), `place` (default place), `every_min` (nests are visited about hourly)
 - `title_include`: crumbs it likes
+- `company_title_require`: nest crumbs must also carry one of these words
 - `seniority_exclude`: crumbs too big for its beak, checked per option in titles like "A / B"
 - `title_exclude`: crumbs it never touches
 - `body_exclude`: phrases that put it off its food
 - `tech_keywords`: shiny bits it mentions when it spots them
 - `allowed_locations`: rooftops it cares about (empty means all)
 - `max_age_days`: stale crumbs are ignored
+
+A new window is learned quietly on its first visit, so adding one never floods the perch.
 
 For local practice, copy it to `config.json` (ignored by git).
 
@@ -56,6 +64,7 @@ pip install -r requirements.txt
 python pigeon.py --dry-run                     # practice flight; no cooing
 python pigeon.py --dry-run --file a=feed.xml   # practice on a saved copy of window "a"
 python pigeon.py --seed                        # look around, remember everything, say nothing
+python pigeon.py --dry-run --all               # visit every window now, ignoring the hourly rhythm
 ```
 
 ## 🌙 Notes from the rooftop
