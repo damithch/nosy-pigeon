@@ -435,15 +435,14 @@ def message_lines(item, tags, label, bold):
     return lines
 
 
-def telegram_text(token, chat, text):
+def telegram_text(token, chat, text, markup=None):
     """Send HTML text to every chat id in TELEGRAM_CHAT_ID ("111,222"). True if any got it."""
     ok_any = False
     for i, cid in enumerate(c.strip() for c in chat.split(",") if c.strip()):
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": cid, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
-            timeout=20,
-        )
+        body = {"chat_id": cid, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+        if markup:
+            body["reply_markup"] = markup
+        r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json=body, timeout=20)
         if r.ok:
             ok_any = True
         else:  # recipient number only, never the id: logs are public
@@ -565,7 +564,103 @@ def update_health(cfg, labels, results, stats, send=True):
     return len(msgs)
 
 
-def send_telegram(item, tags, label):
+# ---------- pecks: buttons under each coo ----------
+# Tapping a button is picked up on the next flight (up to 5 minutes later), stored
+# in the loft, and the message is edited to show what was picked. Button words come
+# from "buttons" in the config: {"done": "...", "pass": "..."}.
+
+VERDICTS = ("done", "pass")
+DEFAULT_BUTTONS = {"done": "✅ Done", "pass": "⏭ Pass"}
+
+
+def peck_buttons(fp, cfg):
+    words = {**DEFAULT_BUTTONS, **(cfg.get("buttons") or {})}
+    return {"inline_keyboard": [[{"text": words[v], "callback_data": f"{v[0]}:{fp}"} for v in VERDICTS]]}
+
+
+def peck_status(fp, verdict, cfg, when):
+    words = {**DEFAULT_BUTTONS, **(cfg.get("buttons") or {})}
+    return {"inline_keyboard": [[{"text": f"{words[verdict]} · {when}  (tap to undo)", "callback_data": f"u:{fp}"}]]}
+
+
+def tg(token, method, **body):
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{token}/{method}", json=body, timeout=20)
+        return r.json() if r.ok else None
+    except requests.RequestException:
+        return None
+
+
+def collect_pecks(cfg):
+    """Read button taps since the last flight, store them, and update the messages."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        return 0
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if not loft:  # leave the taps waiting at Telegram until the loft is back
+        return 0
+    n = 0
+    try:
+        offset = loft.note("tg_offset") or 0
+        res = tg(token, "getUpdates", offset=offset, timeout=0, allowed_updates=["callback_query"])
+        updates = (res or {}).get("result", [])
+        people = cfg.get("people") or {}
+        for u in updates:
+            offset = max(offset, u["update_id"] + 1)
+            q = u.get("callback_query")
+            if not q or ":" not in (q.get("data") or ""):
+                continue
+            kind, fp = q["data"].split(":", 1)
+            msg = q.get("message") or {}
+            chat_id = str((msg.get("chat") or {}).get("id", ""))
+            who = people.get(chat_id) or (q.get("from") or {}).get("first_name") or chat_id
+            if kind == "u":
+                loft.unpeck(fp, who)
+                markup, note = peck_buttons(fp, cfg), "Undone"
+            else:
+                verdict = next((v for v in VERDICTS if v[0] == kind), None)
+                if not verdict:
+                    continue
+                at = datetime.now(timezone.utc)  # taps carry no time; this is within 5 min of it
+                loft.peck(fp, who, verdict)
+                markup = peck_status(fp, verdict, cfg, (at + LOCAL_TZ).strftime("%a %d %b, %I:%M %p"))
+                note = "Saved"
+            if msg:
+                tg(token, "editMessageReplyMarkup", chat_id=chat_id, message_id=msg["message_id"],
+                   reply_markup=markup)
+            tg(token, "answerCallbackQuery", callback_query_id=q["id"], text=note)  # may have expired: fine
+            n += 1
+        if updates:
+            loft.note("tg_offset", offset)
+            # tell Telegram these are handled, so they aren't sent again
+            tg(token, "getUpdates", offset=offset, timeout=0, allowed_updates=["callback_query"])
+    except Exception as exc:
+        print(f"pecks: failed ({type(exc).__name__})", file=sys.stderr)
+    finally:
+        loft.close()
+    if n:
+        print(f"pecks: {n} tap(s) stored")
+    return n
+
+
+def practice_coo(cfg):
+    """One harmless sample coo, stored in the loft so its buttons can be tried."""
+    stamp = datetime.now(timezone.utc)
+    item = {"id": f"practice:{stamp.isoformat()}", "source": "practice", "title": "Practice coo (tap a button)",
+            "org": "Nosy Pigeon", "place": "Rooftop", "kind": "", "closing": "", "link": "https://github.com",
+            "published": stamp, "body": "", "stars": 3}
+    item["_fp"] = fingerprint(item["id"])
+    item.update(_liked=True, _stars=3, _tags=[], _cooed=stamp)
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if not loft:
+        sys.exit(f"practice coo needs the loft ({Loft.last_problem})")
+    loft.record({"practice": ("Practice", "practice")}, {}, [item], {})
+    loft.close()
+    ok = send_telegram(item, [], "Practice", cfg)
+    print(f"practice coo sent={ok}")
+
+
+def send_telegram(item, tags, label, cfg=None):
     token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
     if not (token and chat):
         return False
@@ -573,7 +668,8 @@ def send_telegram(item, tags, label):
     esc = {k: e(v) if isinstance(v, str) else v for k, v in item.items()}
     lines = message_lines(esc, [e(t) for t in tags], e(label), lambda s: f"<b>{s}</b>")
     lines.append(f'🔗 <a href="{e(item["link"])}">Open</a>')
-    return telegram_text(token, chat, "\n".join(lines))
+    markup = peck_buttons(item["_fp"], cfg or {}) if os.getenv("PIGEON_DB_URL") and item.get("_fp") else None
+    return telegram_text(token, chat, "\n".join(lines), markup)
 
 
 def send_discord(item, tags, label):
@@ -622,6 +718,7 @@ def main():
     ap.add_argument("--file", action="append", default=[], metavar="NAME=PATH")
     ap.add_argument("--all", action="store_true", help="check every source now, ignoring intervals")
     ap.add_argument("--roll-call", action="store_true", help="send the list of watched places to Telegram and stop")
+    ap.add_argument("--test-coo", action="store_true", help="send one practice coo with buttons and stop")
     args = ap.parse_args()
     files = dict(f.split("=", 1) for f in args.file)
     verbose = args.verbose or args.dry_run
@@ -630,6 +727,11 @@ def main():
     if args.roll_call:
         roll_call(cfg)
         return
+    if args.test_coo:
+        practice_coo(cfg)
+        return
+    if not (args.dry_run or args.seed):
+        collect_pecks(cfg)
     labels, now_min = {}, int(time.time() // 60)
     jobs = []
     for i, (name, src) in enumerate(cfg.get("sources", {}).items(), 1):
@@ -731,7 +833,7 @@ def main():
         if args.dry_run:
             continue
         label = labels[item["source"]]
-        if any([send_telegram(item, tags, label), send_discord(item, tags, label), send_whatsapp(item, tags, label)]):
+        if any([send_telegram(item, tags, label, cfg), send_discord(item, tags, label), send_whatsapp(item, tags, label)]):
             new_fps.append(fp)
             sent += 1
             item["_cooed"] = datetime.now(timezone.utc)

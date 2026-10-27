@@ -11,6 +11,10 @@ on:
         description: Send the list of watched places to Telegram instead of checking
         type: boolean
         default: false
+      test_coo:
+        description: Send one practice coo with buttons instead of checking
+        type: boolean
+        default: false
 
 permissions:
   contents: write      # needed to commit seen.json and health.json back
@@ -44,7 +48,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           WHATSAPP_APIKEY: ${{ secrets.WHATSAPP_APIKEY }}
-        run: python pigeon.py ${{ inputs.roll_call && '--roll-call' || '' }}
+        run: python pigeon.py ${{ inputs.roll_call && '--roll-call' || '' }} ${{ inputs.test_coo && '--test-coo' || '' }}
 
       - name: Save what the pigeon saw
         if: ${{ !cancelled() }}   # keep its health notes even when every window failed

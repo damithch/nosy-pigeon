@@ -110,6 +110,17 @@ class Loft:
                 pass
             return False
 
+    def peck(self, fp, who, verdict):
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("""insert into pigeon.pecks (fp, who, verdict)
+                           select %s, %s, %s where exists (select 1 from pigeon.crumbs where fp = %s)
+                           on conflict (fp, who) do update set verdict = excluded.verdict, at = now()""",
+                        (fp, who, verdict, fp))
+
+    def unpeck(self, fp, who):
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("delete from pigeon.pecks where fp = %s and who = %s", (fp, who))
+
     def note(self, key, value=None):
         """Read (value=None) or write a small JSON note."""
         with self.conn.transaction(), self.conn.cursor() as cur:
