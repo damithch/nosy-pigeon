@@ -350,7 +350,7 @@ COMPANY_TYPES = {"lever", "workable", "smartrecruiters", "workday", "recruiterbo
 
 
 def due(name, src, now_min):
-    """Company pages are checked about hourly, staggered so they don't all go at once."""
+    """Is this window due this run? Slower windows are staggered so they don't all go at once."""
     every = int(src.get("every_min", 60 if src["type"] in COMPANY_TYPES or src.get("company") else 5))
     if every <= 5:
         return True
