@@ -13,7 +13,7 @@ on:
         default: false
 
 permissions:
-  contents: write      # needed to commit seen.json back
+  contents: write      # needed to commit seen.json and health.json back
 
 concurrency:
   group: pigeon
@@ -46,10 +46,11 @@ jobs:
         run: python pigeon.py ${{ inputs.roll_call && '--roll-call' || '' }}
 
       - name: Save what the pigeon saw
+        if: ${{ !cancelled() }}   # keep its health notes even when every window failed
         run: |
           git config user.name "nosy-pigeon"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add seen.json
+          git add seen.json health.json
           git diff --cached --quiet && exit 0
           git commit -m "chore: pigeon memory [skip ci]"
           # main may have moved while we flew: rebase and retry

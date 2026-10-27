@@ -15,6 +15,11 @@ Flags:
   --seed                 remember everything currently visible, send nothing
   --verbose              print matched titles (never use in public CI logs)
   --file NAME=PATH       read source NAME from a saved local file (repeatable)
+
+Health: health.json (fingerprinted, counts only) tracks failures per window.
+A window that fails `warn_after` checks in a row (default 6) gets a Telegram
+warning, then a note when it recovers. A summary of the previous day is sent
+after `summary_hour` local time (default 8).
 """
 
 import argparse
@@ -36,6 +41,7 @@ import requests
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
 SEEN_PATH = ROOT / "seen.json"
+HEALTH_PATH = ROOT / "health.json"
 SEEN_LIMIT = 5000
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/128.0 Safari/537.36")
@@ -440,9 +446,103 @@ def roll_call(cfg):
     if boards:
         lines += ["<b>Job boards</b> (every 5 min)"] + [f"• {b}" for b in boards] + [""]
     if companies:
-        lines += [f"<b>Companies</b> ({len(companies)}, about hourly)"] + [f"• {c}" for c in sorted(companies, key=str.lower)]
+        lines += [f"<b>Companies</b> ({len(companies)}, every 5-15 min)"] + [f"• {c}" for c in sorted(companies, key=str.lower)]
     ok = telegram_text(token, chat, "\n".join(lines))
     print(f"roll call: {len(boards)} boards, {len(companies)} companies, sent={ok}")
+
+
+# ---------- health: warn when a window breaks, daily check-in ----------
+
+def notify(text):
+    token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+    return bool(token and chat) and telegram_text(token, chat, text)
+
+
+def local_now():
+    return datetime.now(timezone.utc) + LOCAL_TZ
+
+
+def update_health(cfg, labels, results, stats, send=True):
+    """results: {name: (n_items or None, exc_name or None)} for windows checked this run."""
+    h = load_json(HEALTH_PATH, {})
+    src_state, days = h.setdefault("src", {}), h.setdefault("days", {})
+    now = local_now()
+    today, stamp = now.strftime("%Y-%m-%d"), now.strftime("%a %d %b, %I:%M %p")
+    warn_after = int(cfg.get("warn_after", 6))
+    stale_days = int(cfg.get("stale_days", 7))
+    sources = cfg.get("sources", {})
+    e = html.escape
+    msgs = []
+
+    for name, (n, err) in results.items():
+        src = sources[name]
+        st = src_state.setdefault(fingerprint(f"health:{name}"), {})
+        label = e(labels[name])
+        is_company = src["type"] in COMPANY_TYPES or src.get("company")
+        empty_is_broken = src.get("expect_items", not is_company)
+        if err is None and n == 0 and empty_is_broken:
+            err = "empty page"
+        if err is not None:
+            st["f"] = st.get("f", 0) + 1
+            st.setdefault("since", stamp)
+            st["why"] = err
+            if st["f"] == warn_after:
+                msgs.append(f"⚠️ <b>{label}</b> has failed {warn_after} checks in a row ({e(err)}), "
+                            f"since {st['since']}.\nNo alerts will come from it until it recovers. "
+                            f"The site may be down or may have changed its layout.")
+                st["w"] = 1
+            continue
+        if st.get("w"):
+            msgs.append(f"✅ <b>{label}</b> is working again (after {st['f']} failed checks).")
+        for k in ("f", "since", "why", "w"):
+            st.pop(k, None)
+        if n:
+            st["ok"] = today
+            st.pop("sw", None)
+        elif is_company and st.get("ok") and not st.get("sw"):
+            quiet = (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(st["ok"], "%Y-%m-%d")).days
+            if quiet >= stale_days:
+                msgs.append(f"🤔 <b>{label}</b> has shown no listings for {quiet} days. "
+                            f"They may just not be hiring, or the page may have changed.")
+                st["sw"] = 1
+
+    d = days.setdefault(today, {"runs": 0, "checks": 0, "errors": 0, "new": 0, "sent": 0})
+    d["runs"] += 1
+    for k in ("checks", "errors", "new", "sent"):
+        d[k] += stats.get(k, 0)
+
+    # yesterday's check-in, once, after summary_hour local time
+    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    if now.hour >= int(cfg.get("summary_hour", 8)) and h.get("reported") != yesterday:
+        y = days.get(yesterday)
+        if y:
+            names = [n for n, s in sources.items() if s.get("enabled", True)]
+            broken = [labels.get(n, n) for n in names
+                      if src_state.get(fingerprint(f"health:{n}"), {}).get("f", 0) >= warn_after]
+            day = datetime.strptime(yesterday, "%Y-%m-%d").strftime("%a %d %b")
+            lines = [f"🐦 <b>Daily check-in</b> ({day})",
+                     f"🔁 {y['runs']} runs, {y['checks']} window checks",
+                     f"🆕 {y['new']} new posts seen, {y['sent']} sent to you"]
+            if y["errors"]:
+                lines.append(f"🧱 {y['errors']} failed checks")
+            lines.append(f"⚠️ Not working now: {', '.join(e(b) for b in broken)}" if broken
+                         else f"✅ All {len(names)} windows healthy")
+            msgs.append("\n".join(lines))
+        h["reported"] = yesterday
+    for k in sorted(days)[:-3]:
+        del days[k]
+
+    # forget windows that were removed from the config
+    live = {fingerprint(f"health:{n}") for n in sources}
+    for k in [k for k in src_state if k not in live]:
+        del src_state[k]
+
+    if send:
+        for m in msgs:
+            notify(m)
+            time.sleep(1)
+    HEALTH_PATH.write_text(json.dumps(h, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    return len(msgs)
 
 
 def send_telegram(item, tags, label):
@@ -528,18 +628,23 @@ def main():
         except Exception as exc:  # one broken source shouldn't stop the others
             return i, name, None, exc
 
-    items, failures, ok_sources = [], 0, []
+    items, failures, ok_sources, results = [], 0, [], {}
     with ThreadPoolExecutor(8) as pool:
         for i, name, found, exc in sorted(pool.map(run, jobs), key=lambda r: r[0]):
             if exc is not None:
                 failures += 1
                 # only the exception type: messages can contain the URL
                 print(f"window {i}: failed ({type(exc).__name__})", file=sys.stderr)
+                results[name] = (None, type(exc).__name__)
                 continue
             print(f"window {i}: {len(found)} items")
+            results[name] = (len(found), None)
             ok_sources.append(name)
             items += found
+    stats = {"checks": len(jobs), "errors": failures}
     if jobs and not ok_sources:
+        if not args.dry_run:
+            update_health(cfg, labels, results, stats)
         sys.exit("All windows failed.")
 
     channels = [n for n, on in (
@@ -571,12 +676,13 @@ def main():
         print(f"{len(fresh)} new window(s): remembered {learned} items quietly")
 
     items.sort(key=lambda x: x["published"] or datetime.min.replace(tzinfo=timezone.utc))
-    sent, matched = 0, 0
+    sent, matched, fresh_posts = 0, 0, 0
     for item in items:
         fp = fingerprint(item["id"])
         if fp in seen_set:
             continue
         seen_set.add(fp)
+        fresh_posts += 1
         ok, tags = matches(item, cfg)
         if args.seed or not ok:
             new_fps.append(fp)
@@ -597,6 +703,10 @@ def main():
         print(f"[dry run] {len(items)} items, {matched} would be sent.")
         return
     SEEN_PATH.write_text(json.dumps((seen + new_fps)[-SEEN_LIMIT:], indent=0) + "\n", encoding="utf-8")
+    stats.update(new=fresh_posts, sent=sent)
+    notes = update_health(cfg, labels, results, stats, send=not args.seed)
+    if notes:
+        print(f"{notes} health note(s)")
     if args.seed:
         print(f"Remembered {len(new_fps)} items.")
     else:

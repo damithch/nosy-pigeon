@@ -6,7 +6,7 @@ A small, nosy bird that sits on the rooftops of the internet, keeps an eye on a 
 
 ## 🪶 The Pigeon Code
 
-**F**lies a quiet patrol every ten minutes, day and night.
+**F**lies a quiet patrol every five minutes, day and night.
 **I**gnores the shiny noise; it has seen enough of that.
 **N**ever coos about the same thing twice. A pigeon remembers.
 **D**rops a single note when something new shows up below.
@@ -41,6 +41,9 @@ The pigeon keeps its rooftops secret. Its real map lives in a repo secret called
 - `tech_keywords`: shiny bits it mentions when it spots them
 - `allowed_locations`: rooftops it cares about (empty means all)
 - `max_age_days`: stale crumbs are ignored
+- `warn_after`: how many failed visits in a row before the pigeon says a window is stuck (default 6)
+- `stale_days`: a nest that has gone quiet this many days gets a gentle note (default 7)
+- `summary_hour`: local hour after which yesterday's check-in is sent (default 8)
 
 A new window is learned quietly on its first visit, so adding one never floods the perch.
 
@@ -69,10 +72,12 @@ python pigeon.py --dry-run --all               # visit every window now, ignorin
 
 ## 🌙 Notes from the rooftop
 - The logs only ever say how many crumbs it saw, never what they were.
-- If a window changes shape, the log says `0 rows parsed` and the pigeon keeps watching the others.
+- If a window keeps failing, or a busy rooftop suddenly looks empty, the pigeon coos a ⚠️ warning, and a ✅ when it comes back.
+- Every morning it sends a short check-in about the day before: flights flown, windows visited, new crumbs, coos sent.
+- Its health notes live in `health.json`: fingerprints and counts only.
 - If a coo doesn't get through, it tries again next round.
 - GitHub's clock is a little lazy, so flights can be 5–15 minutes late.
-- It flies every 10 minutes around the clock. Pigeons in public repos get free Actions minutes, so no rest is needed.
+- It flies every 5 minutes around the clock. Pigeons in public repos get free Actions minutes, so no rest is needed.
 
 ---
 
