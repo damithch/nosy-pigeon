@@ -399,9 +399,27 @@ def matches(item, cfg):
 
 # ---------- notifiers ----------
 
+# Which crumbs to open first. Overridable with "rank": {"3": [...], "2": [...]} in the config.
+DEFAULT_RANK = {
+    "3": ["devops", "sre", "site reliability", "cloud", "platform engineer", "infrastructure", "devsecops",
+          "mlops", "kubernetes", "aws", "azure", "gcp", "techops"],
+    "2": ["software engineer", "software developer", "software engineering", "developer", "backend", "back-end",
+          "full stack", "full-stack", "fullstack", "frontend", "front-end", "ai", "ml", "ai/ml",
+          "machine learning", "llm", "generative ai", "data engineer", "data scientist", "web", "mobile"],
+}
+
+
+def stars(item, cfg):
+    rank = cfg.get("rank") or DEFAULT_RANK
+    for n in ("3", "2"):
+        if contains_any(item["title"], rank.get(n, [])):
+            return int(n)
+    return 1
+
+
 def message_lines(item, tags, label, bold):
     lines = [
-        f"🐦 {bold(item['title'])}",
+        f"{'⭐' * item.get('stars', 1)} {bold(item['title'])}",
         f"🏢 {item['org']}",
         f"📍 {item['place'] or '—'}" + (f"  ·  {item['kind']}" if item["kind"] else ""),
     ]
@@ -688,8 +706,9 @@ def main():
             new_fps.append(fp)
             continue
         matched += 1
+        item["stars"] = stars(item, cfg)
         if verbose:
-            print(f"  MATCH [{labels[item['source']]}] {item['title']} - {item['org']} [{item['place'] or '-'}] {', '.join(tags)}")
+            print(f"  MATCH {'*' * item['stars']} [{labels[item['source']]}] {item['title']} - {item['org']} [{item['place'] or '-'}] {', '.join(tags)}")
         if args.dry_run:
             continue
         label = labels[item["source"]]

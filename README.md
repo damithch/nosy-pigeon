@@ -39,6 +39,7 @@ The pigeon keeps its rooftops secret. Its real map lives in a repo secret called
 - `title_exclude`: crumbs it never touches
 - `body_exclude`: phrases that put it off its food
 - `tech_keywords`: shiny bits it mentions when it spots them
+- `rank`: which crumbs get ⭐⭐⭐ or ⭐⭐ (`{"3": [...], "2": [...]}`); everything else gets ⭐
 - `allowed_locations`: rooftops it cares about (empty means all)
 - `max_age_days`: stale crumbs are ignored
 - `warn_after`: how many failed visits in a row before the pigeon says a window is stuck (default 6)
