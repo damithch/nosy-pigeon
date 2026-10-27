@@ -8,10 +8,10 @@
    "sent": 0
   },
   "2026-10-28": {
-   "checks": 394,
-   "errors": 1,
+   "checks": 407,
+   "errors": 2,
    "new": 0,
-   "runs": 28,
+   "runs": 29,
    "sent": 0
   }
  },
@@ -79,7 +79,10 @@
    "ok": "2026-10-28"
   },
   "e9ba6f0f375f779bd960": {
-   "ok": "2026-10-28"
+   "f": 1,
+   "ok": "2026-10-28",
+   "since": "Wed 28 Oct, 02:20 AM",
+   "why": "ConnectTimeout"
   },
   "f17dc006e5b0dcd2f72a": {
    "ok": "2026-10-28"
