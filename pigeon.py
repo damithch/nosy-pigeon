@@ -38,6 +38,8 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import feedparser
 import requests
 
+from loft import Loft
+
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
 SEEN_PATH = ROOT / "seen.json"
@@ -660,9 +662,20 @@ def main():
             ok_sources.append(name)
             items += found
     stats = {"checks": len(jobs), "errors": failures}
+    for item in items:
+        item["_fp"] = fingerprint(item["id"])
+    windows = {n: (labels[n], s["type"]) for n, s in cfg.get("sources", {}).items() if n in labels}
+
+    def remember(stored_items):
+        loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+        if loft:
+            loft.record(windows, results, stored_items, stats)
+            loft.close()
+
     if jobs and not ok_sources:
         if not args.dry_run:
             update_health(cfg, labels, results, stats)
+            remember([])
         sys.exit("All windows failed.")
 
     channels = [n for n, on in (
@@ -702,11 +715,13 @@ def main():
         seen_set.add(fp)
         fresh_posts += 1
         ok, tags = matches(item, cfg)
+        item["_liked"] = ok
         if args.seed or not ok:
             new_fps.append(fp)
             continue
         matched += 1
         item["stars"] = stars(item, cfg)
+        item["_stars"], item["_tags"] = item["stars"], tags
         if verbose:
             print(f"  MATCH {'*' * item['stars']} [{labels[item['source']]}] {item['title']} - {item['org']} [{item['place'] or '-'}] {', '.join(tags)}")
         if args.dry_run:
@@ -715,6 +730,7 @@ def main():
         if any([send_telegram(item, tags, label), send_discord(item, tags, label), send_whatsapp(item, tags, label)]):
             new_fps.append(fp)
             sent += 1
+            item["_cooed"] = datetime.now(timezone.utc)
             time.sleep(1)
         # if every channel failed, leave it unseen so the next run retries
 
@@ -726,6 +742,7 @@ def main():
     notes = update_health(cfg, labels, results, stats, send=not args.seed)
     if notes:
         print(f"{notes} health note(s)")
+    remember(items)
     if args.seed:
         print(f"Remembered {len(new_fps)} items.")
     else:
