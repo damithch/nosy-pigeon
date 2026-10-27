@@ -671,6 +671,10 @@ def main():
         if loft:
             loft.record(windows, results, stored_items, stats)
             loft.close()
+        # leave a one-word note in health.json so problems are visible without logs
+        h = load_json(HEALTH_PATH, {})
+        h["loft"] = Loft.last_problem or "ok"
+        HEALTH_PATH.write_text(json.dumps(h, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
     if jobs and not ok_sources:
         if not args.dry_run:

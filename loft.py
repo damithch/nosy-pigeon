@@ -15,24 +15,45 @@ except ImportError:  # the loft is optional
     psycopg = None
 
 
+def why(exc):
+    """A short, safe reason (never the message itself: it can contain the host)."""
+    m = str(exc).lower()
+    for key, words in (("password", ("password authentication", "authentication failed")),
+                       ("tenant", ("tenant or user not found", "tenant")),
+                       ("dns", ("resolve host", "name or service not known", "nodename")),
+                       ("timeout", ("timeout", "timed out")),
+                       ("refused", ("refused",)),
+                       ("ssl", ("ssl",)),
+                       ("url", ("invalid dsn", "missing", "invalid connection option", "invalid uri"))):
+        if any(w in m for w in words):
+            return key
+    return type(exc).__name__
+
+
 class Loft:
+    last_problem = None   # read by the health notes
+
     def __init__(self, conn):
         self.conn = conn
 
     @classmethod
     def open(cls, url):
         if not url:
+            Loft.last_problem = "no url"
             return None
         if psycopg is None:
+            Loft.last_problem = "no driver"
             print("loft: psycopg not installed", file=sys.stderr)
             return None
         try:
             # prepare_threshold=None keeps it friendly with connection poolers
             conn = psycopg.connect(url, connect_timeout=10, prepare_threshold=None,
                                    options="-c statement_timeout=30000")
+            Loft.last_problem = None
             return cls(conn)
         except Exception as exc:  # never print the message: it can contain the host
-            print(f"loft: unavailable ({type(exc).__name__})", file=sys.stderr)
+            Loft.last_problem = why(exc)
+            print(f"loft: unavailable ({Loft.last_problem})", file=sys.stderr)
             return None
 
     def record(self, windows, results, items, stats):
@@ -81,7 +102,8 @@ class Loft:
             print(f"loft: stored {len(results)} visits, {len(rows)} crumbs")
             return True
         except Exception as exc:
-            print(f"loft: write failed ({type(exc).__name__})", file=sys.stderr)
+            Loft.last_problem = "write " + why(exc)
+            print(f"loft: write failed ({Loft.last_problem})", file=sys.stderr)
             try:
                 self.conn.rollback()
             except Exception:
