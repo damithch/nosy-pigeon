@@ -252,6 +252,19 @@ def read_workday(name, src, get):
             for j in data.get("jobPostings", [])]
 
 
+def read_recruiterbox(name, src, get):
+    data = json.loads(get(f"https://jsapi.recruiterbox.com/v1/openings?client_name={src['company']}&limit=100"))
+    out = []
+    for j in data.get("objects", []):
+        loc = j.get("location") or {}
+        out.append(new_item(name, src, id=f"rbox:{j['id']}", title=j.get("title", ""),
+                            link=j.get("hosted_url", ""),
+                            place=", ".join(x for x in (loc.get("city"), loc.get("state"), loc.get("country")) if x),
+                            kind=(j.get("position_type") or "").replace("_", " "),
+                            body=strip_html(j.get("description", ""))))
+    return out
+
+
 # ---------- company sources: careers pages ----------
 
 GENERIC_TEXT = re.compile(r"^(read more|view more|view|more|apply|apply now|find out more|more details|details|"
@@ -325,9 +338,9 @@ def read_links(name, src, get):
 
 
 READERS = {"rss": read_rss, "table": read_table, "lever": read_lever, "workable": read_workable,
-           "smartrecruiters": read_smartrecruiters, "workday": read_workday,
+           "smartrecruiters": read_smartrecruiters, "workday": read_workday, "recruiterbox": read_recruiterbox,
            "jsonld": read_jsonld, "links": read_links}
-COMPANY_TYPES = {"lever", "workable", "smartrecruiters", "workday", "jsonld", "links"}
+COMPANY_TYPES = {"lever", "workable", "smartrecruiters", "workday", "recruiterbox", "jsonld", "links"}
 
 
 def due(name, src, now_min):

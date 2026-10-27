@@ -60,6 +60,12 @@
       "type": "jsonld",
       "label": "Roof nest",
       "url": "https://example.org/careers"
+    },
+    "nest_box": {
+      "type": "recruiterbox",
+      "label": "Another nest",
+      "company": "another-nest",
+      "enabled": false
     }
   },
   "title_include": [

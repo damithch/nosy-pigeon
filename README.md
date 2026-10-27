@@ -29,7 +29,7 @@ The pigeon keeps its rooftops secret. Its real map lives in a repo secret called
 `config.example.json` shows the shape of the map:
 - `sources`: windows to watch. Close one with `"enabled": false`. Kinds of window:
   - `rss` feeds and `table` pages: busy rooftops, checked every flight
-  - `lever`, `workable`, `smartrecruiters`, `workday`: nests that publish their own feed (needs `company`, Workday also `host`/`tenant`/`site`)
+  - `lever`, `workable`, `smartrecruiters`, `workday`, `recruiterbox`: nests that publish their own feed (needs `company`, Workday also `host`/`tenant`/`site`)
   - `links`: any page; crumbs are links matching `pattern`, titled from the link text or the link itself (`"title_from": "slug"`)
   - `jsonld`: pages that describe their crumbs in schema.org JSON-LD
   - per window: `location_any` (only crumbs from these places), `place` (default place), `every_min` (nests are visited about hourly)
