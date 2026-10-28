@@ -121,6 +121,52 @@ class Loft:
         with self.conn.transaction(), self.conn.cursor() as cur:
             cur.execute("delete from pigeon.pecks where fp = %s and who = %s", (fp, who))
 
+    # ---- applications: what a perch went for, summarised for later ----
+
+    def pending_applications(self, limit=3):
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("""select a.id, a.who, a.title, a.org, a.link, a.attempts, c.window_key
+                           from pigeon.applications a join pigeon.crumbs c using (fp)
+                           where a.summary_state = 'pending' order by a.applied_at limit %s""", (limit,))
+            cols = [d.name for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def save_summary(self, app_id, state, raw_text=None, company=None, role=None, skills=None, closing=None):
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("""update pigeon.applications set summary_state = %s, raw_text = coalesce(%s, raw_text),
+                             summary_company = %s, summary_role = %s, skills = %s, closing = %s,
+                             attempts = attempts + 1, updated_at = now() where id = %s""",
+                        (state, raw_text, company, role, skills, closing, app_id))
+
+    def retry_later(self, app_id, give_up_after=4):
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("""update pigeon.applications set attempts = attempts + 1, updated_at = now(),
+                             summary_state = case when attempts + 1 >= %s then 'failed' else summary_state end
+                           where id = %s returning summary_state""", (give_up_after, app_id))
+            return cur.fetchone()[0]
+
+    # ---- the oracle's opinions and the perches' past choices ----
+
+    def recent_choices(self, limit=15):
+        """[(verdict, title, org)] most recent first, for teaching the oracle."""
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("""(select p.verdict, c.title, c.org from pigeon.pecks p join pigeon.crumbs c using (fp)
+                            where p.verdict = 'done' and c.window_key <> 'practice' order by p.at desc limit %s)
+                           union all
+                           (select p.verdict, c.title, c.org from pigeon.pecks p join pigeon.crumbs c using (fp)
+                            where p.verdict = 'pass' and c.window_key <> 'practice' order by p.at desc limit %s)""",
+                        (limit, limit))
+            return cur.fetchall()
+
+    def save_opinions(self, rows):
+        """rows: [(fp, fit, stars, reason)]; the crumbs must already be stored."""
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.executemany("""insert into pigeon.opinions (fp, fit, stars, reason)
+                               select %s, %s, %s, %s where exists (select 1 from pigeon.crumbs where fp = %s)
+                               on conflict (fp) do update set fit = excluded.fit, stars = excluded.stars,
+                                 reason = excluded.reason, at = now()""",
+                            [(fp, fit, st, rs, fp) for fp, fit, st, rs in rows])
+
     def note(self, key, value=None):
         """Read (value=None) or write a small JSON note."""
         with self.conn.transaction(), self.conn.cursor() as cur:

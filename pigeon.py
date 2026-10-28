@@ -39,6 +39,7 @@ import feedparser
 import requests
 
 from loft import Loft
+import oracle
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
@@ -562,6 +563,8 @@ def message_lines(item, tags, label, bold):
     elif item["published"]:
         lines.append(f"🕒 {(item['published'] + LOCAL_TZ).strftime('%a %d %b, %I:%M %p')}")
     lines.append(f"🌐 {label}")
+    if item.get("_reason"):
+        lines.append(("❓ Not sure: " if item.get("_fit") == "maybe" else "💡 ") + item["_reason"])
     return lines
 
 
@@ -734,6 +737,8 @@ def collect_pecks(cfg):
         return 0
     n = 0
     try:
+        if (loft.note("webhook") or {}).get("on"):
+            return 0  # coo answers taps the moment they happen
         offset = loft.note("tg_offset") or 0
         res = tg(token, "getUpdates", offset=offset, timeout=0, allowed_updates=["callback_query"])
         updates = (res or {}).get("result", [])
@@ -921,6 +926,197 @@ def scheduled_health_check(cfg):
     health_check(cfg)
 
 
+# ---------- coo: Telegram talks to an always-on function instead of waiting for flights ----------
+
+def webhook_secret(token):
+    return hashlib.sha256(f"{token}:coo".encode()).hexdigest()[:48]
+
+
+def set_webhook(cfg, on):
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if not (token and loft):
+        sys.exit("needs the Telegram token and the loft")
+    try:
+        loft.note("people", cfg.get("people") or {})
+        loft.note("buttons", {**DEFAULT_BUTTONS, **(cfg.get("buttons") or {})})
+        if on:
+            url = (loft.note("coo") or {}).get("url")
+            if not url:
+                sys.exit("no coo url in the loft")
+            res = tg(token, "setWebhook", url=url, secret_token=webhook_secret(token),
+                     allowed_updates=["callback_query", "message"], drop_pending_updates=False)
+        else:
+            res = tg(token, "deleteWebhook", drop_pending_updates=False)
+        ok = bool(res and res.get("ok"))
+        if ok:
+            loft.note("webhook", {"on": on, "at": datetime.now(timezone.utc).isoformat()})
+        info = tg(token, "getWebhookInfo") or {}
+        r = info.get("result", {})
+        print(f"webhook {'on' if on else 'off'}: ok={ok} pending={r.get('pending_update_count')} "
+              f"last_error={'yes' if r.get('last_error_message') else 'no'}")
+    finally:
+        loft.close()
+
+
+# ---------- the oracle: summaries of applied jobs, and a second opinion on unsure crumbs ----------
+
+def page_text(raw):
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+    text = re.sub(r"(?is)<(script|style|noscript|svg|nav|footer|header)\b.*?</\1>", " ", text)
+    return strip_html(text)
+
+
+def ad_images(raw, base):
+    """Big-looking images on an ad page (topjobs ads are often a single picture)."""
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+    srcs = re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', text, re.I)
+    keep = [urljoin(base, s) for s in srcs
+            if not re.search(r"(logo|icon|sprite|banner|facebook|twitter|linkedin|whatsapp|pixel|\.svg)", s, re.I)]
+    return keep[:3]
+
+
+SUMMARY_SCHEMA = {"type": "OBJECT", "properties": {
+    "company": {"type": "STRING"}, "role": {"type": "STRING"},
+    "skills": {"type": "ARRAY", "items": {"type": "STRING"}}, "closing": {"type": "STRING"}},
+    "required": ["company", "role", "skills", "closing"]}
+
+
+def summarise_applications(cfg):
+    """For jobs someone tapped Applied on: read the ad and keep a short summary for interview day."""
+    if not os.getenv("GEMINI_API_KEY"):
+        return 0
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if not loft:
+        return 0
+    relays = load_relay()
+    chats = {name: chat for chat, name in (cfg.get("people") or {}).items()}
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    done = 0
+    try:
+        for app in loft.pending_applications(limit=3):
+            raw, text, images = b"", "", []
+            try:
+                raw = fetch_or_relay(app["link"], relays)
+                text = page_text(raw)[:15000]
+                if len(text) < 600:  # probably a picture ad: let the oracle read the picture
+                    for u in ad_images(raw, app["link"]):
+                        try:
+                            data = fetch_or_relay(u, relays)
+                            if len(data) > 15000:
+                                mime = "image/png" if data[:4] == b"\x89PNG" else \
+                                    "image/gif" if data[:3] == b"GIF" else "image/jpeg"
+                                images.append((mime, data))
+                        except Exception:
+                            pass
+            except Exception as exc:
+                print(f"summary: ad unavailable ({type(exc).__name__})", file=sys.stderr)
+            if not text and not images:
+                state = loft.retry_later(app["id"])
+                continue
+            prompt = (
+                "Below is a job advertisement" + (" (its text, and an image of the ad)" if images else "") + ".\n"
+                f"Job title: {app['title']}\nCompany: {app['org'] or 'unknown'}\n\n"
+                "Write, in plain English, using ONLY what the ad says (never invent facts):\n"
+                "company: 1-3 sentences about the company (what it does, where). If the ad says little, say only "
+                "what it does say.\n"
+                "role: 3-5 sentences on the role: what the person will do, and what the ad asks for (education, "
+                "experience, skills, internship length, work mode).\n"
+                "skills: up to 8 short skill names the ad asks for.\n"
+                "closing: the closing date exactly as written in the ad, or an empty string.\n\n"
+                f"AD TEXT:\n{text or '(no text; read the image)'}")
+            res = oracle.ask(prompt, SUMMARY_SCHEMA, images=images, timeout=40)
+            if not res or not (res.get("role") or "").strip():
+                state = loft.retry_later(app["id"])
+                if state == "failed":
+                    loft.save_summary(app["id"], "failed", raw_text=text or None)
+                continue
+            loft.save_summary(app["id"], "done", raw_text=text or None,
+                              company=(res.get("company") or "").strip()[:1500],
+                              role=(res.get("role") or "").strip()[:3000],
+                              skills=[str(x)[:60] for x in (res.get("skills") or [])][:8],
+                              closing=(res.get("closing") or "").strip()[:80] or None)
+            done += 1
+            chat = chats.get(app["who"])
+            if token and chat:
+                e = html.escape
+                telegram_text(token, chat, f"📝 Saved a summary of <b>{e(app['title'])}</b> at {e(app['org'] or '—')}."
+                                           f"\nSend /job {e((app['org'] or app['title']).split()[0])} to read it.")
+    finally:
+        loft.close()
+    if done:
+        print(f"summaries: {done} saved")
+    return done
+
+
+OPINION_SCHEMA = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+    "i": {"type": "INTEGER"}, "fit": {"type": "STRING", "enum": ["strong", "maybe", "no"]},
+    "stars": {"type": "INTEGER"}, "reason": {"type": "STRING"}}, "required": ["i", "fit", "stars", "reason"]}}
+
+DEFAULT_PROFILE = ("a final-year software engineering undergraduate in Sri Lanka looking for internship, trainee, "
+                   "junior or associate roles in DevOps, SRE, cloud, platform/infrastructure, DevSecOps, software "
+                   "engineering (backend, full-stack, web, mobile), AI/ML and QA automation. Not interested in IT "
+                   "support/helpdesk, sales, marketing, design, business analysis, data entry, or senior/lead roles.")
+
+
+def unsure(item, cfg):
+    """Missed by the keywords, but not ruled out by anything else: worth a second opinion."""
+    title = item["title"]
+    if not title or contains_any(title, cfg.get("title_exclude", [])):
+        return False
+    options = [a for a in re.split(r"\s[/|]\s|\s*\|\s*", title) if a.strip()]
+    if all(contains_any(a, cfg.get("seniority_exclude", [])) for a in options):
+        return False
+    if contains_any(item["body"], cfg.get("body_exclude", [])):
+        return False
+    places = cfg.get("allowed_locations") or []
+    if places and item["place"] and not contains_any(item["place"], places):
+        return False
+    max_age = cfg.get("max_age_days")
+    if max_age and item["published"] and (datetime.now(timezone.utc) - item["published"]).days > max_age:
+        return False
+    return True
+
+
+def second_opinion(items, cfg, labels):
+    """Ask the oracle about crumbs the keywords weren't sure of. Returns {fp: (fit, stars, reason)}."""
+    if not items or not os.getenv("GEMINI_API_KEY"):
+        return {}
+    items = items[:int(cfg.get("oracle_max", 30))]
+    examples = ""
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if loft:
+        try:
+            past = loft.recent_choices(12)
+            took = [f"- {t} ({o})" for v, t, o in past if v == "done"]
+            left = [f"- {t} ({o})" for v, t, o in past if v == "pass"]
+            if took:
+                examples += "\nJobs they APPLIED to recently:\n" + "\n".join(took)
+            if left:
+                examples += "\nJobs they SKIPPED recently:\n" + "\n".join(left)
+        except Exception:
+            pass
+        finally:
+            loft.close()
+    listing = "\n".join(
+        f"{i}. {x['title']} | {x['org'] or '?'} | {x['place'] or '?'} | via {labels.get(x['source'], x['source'])}"
+        + (f" | {x['body'][:300]}" if x.get("body") else "") for i, x in enumerate(items))
+    prompt = (f"You screen job posts for {cfg.get('profile') or DEFAULT_PROFILE}\n{examples}\n\n"
+              "For each post below decide fit: 'strong' (clearly a match), 'maybe' (could be, worth a look), "
+              "or 'no'. Give stars 1-3 (3 = DevOps/SRE/cloud/platform/security, 2 = software/AI, 1 = other "
+              "tech) and a reason of at most 12 words.\n\nPOSTS:\n" + listing)
+    res = oracle.ask(prompt, OPINION_SCHEMA, timeout=10)
+    out = {}
+    for r in res or []:
+        try:
+            x = items[int(r["i"])]
+        except (KeyError, ValueError, IndexError, TypeError):
+            continue
+        out[x["_fp"]] = (r.get("fit", "no"), max(1, min(3, int(r.get("stars") or 1))),
+                         (r.get("reason") or "").strip()[:140])
+    return out
+
+
 def practice_coo(cfg):
     """One harmless sample coo, stored in the loft so its buttons can be tried."""
     stamp = datetime.now(timezone.utc)
@@ -999,6 +1195,7 @@ def main():
     ap.add_argument("--test-coo", action="store_true", help="send one practice coo with buttons and stop")
     ap.add_argument("--try-windows", action="store_true",
                     help="test candidate windows kept in the loft (note 'candidates'); results go back to the loft")
+    ap.add_argument("--webhook", choices=["on", "off"], help="switch instant Telegram buttons on or off")
     ap.add_argument("--health-check", action="store_true",
                     help="visit every window now, send a health report to Telegram, change nothing else")
     ap.add_argument("--knock", metavar="NAME", help="try a window with different greetings; store status codes in the loft")
@@ -1018,6 +1215,9 @@ def main():
         return
     if args.health_check:
         health_check(cfg)
+        return
+    if args.webhook:
+        set_webhook(cfg, args.webhook == "on")
         return
     if args.try_windows:
         try_windows()
@@ -1112,6 +1312,7 @@ def main():
 
     items.sort(key=lambda x: x["published"] or datetime.min.replace(tzinfo=timezone.utc))
     sent, matched, fresh_posts = 0, 0, 0
+    maybes = []
     for item in items:
         fp = fingerprint(item["id"])
         if fp in seen_set:
@@ -1120,6 +1321,8 @@ def main():
         fresh_posts += 1
         ok, tags = matches(item, cfg)
         item["_liked"] = ok
+        if not ok and not args.seed and unsure(item, cfg):
+            maybes.append(item)
         if args.seed or not ok:
             new_fps.append(fp)
             continue
@@ -1138,6 +1341,26 @@ def main():
             time.sleep(1)
         # if every channel failed, leave it unseen so the next run retries
 
+    # second opinion on the ones the keywords weren't sure about (clear matches above went out already)
+    opinions = second_opinion(maybes, cfg, labels) if maybes else {}
+    for item in maybes:
+        fit, st, reason = opinions.get(item["_fp"], ("no", 1, ""))
+        if fit == "no":
+            continue
+        item.update(_liked=True, stars=st, _stars=st, _fit=fit, _reason=reason, _tags=[])
+        matched += 1
+        if verbose:
+            print(f"  ORACLE {fit} {'*' * st} [{labels[item['source']]}] {item['title']} - {item['org']}")
+        if args.dry_run:
+            continue
+        label = labels[item["source"]]
+        if any([send_telegram(item, [], label, cfg), send_discord(item, [], label), send_whatsapp(item, [], label)]):
+            sent += 1
+            item["_cooed"] = datetime.now(timezone.utc)
+            time.sleep(1)
+    if opinions:
+        print(f"oracle: {len(maybes)} asked, {sum(1 for f, _, _ in opinions.values() if f != 'no')} kept")
+
     if args.dry_run:
         print(f"[dry run] {len(items)} items, {matched} would be sent.")
         return
@@ -1147,8 +1370,18 @@ def main():
     if notes:
         print(f"{notes} health note(s)")
     remember(items)
+    if opinions:
+        loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+        if loft:
+            try:
+                loft.save_opinions([(fp, f, st, rs) for fp, (f, st, rs) in opinions.items()])
+            except Exception as exc:
+                print(f"oracle: opinions not saved ({type(exc).__name__})", file=sys.stderr)
+            finally:
+                loft.close()
     if not args.seed:
         scheduled_health_check(cfg)
+        summarise_applications(cfg)
     if args.seed:
         print(f"Remembered {len(new_fps)} items.")
     else:

@@ -19,6 +19,11 @@ on:
         description: Check every site now and send a health report to Telegram (sends no job alerts)
         type: boolean
         default: false
+      webhook:
+        description: Instant Telegram buttons (on/off; leave empty for a normal flight)
+        type: choice
+        options: ["", "on", "off"]
+        default: ""
       try_windows:
         description: Test candidate windows kept in the loft (results go to the loft)
         type: boolean
@@ -55,12 +60,13 @@ jobs:
         env:
           PIGEON_CONFIG: ${{ secrets.PIGEON_CONFIG }}
           PIGEON_DB_URL: ${{ secrets.PIGEON_DB_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           WHATSAPP_APIKEY: ${{ secrets.WHATSAPP_APIKEY }}
-        run: python pigeon.py ${{ inputs.roll_call && '--roll-call' || '' }} ${{ inputs.test_coo && '--test-coo' || '' }} ${{ inputs.knock && format('--knock {0}', inputs.knock) || '' }} ${{ inputs.health_check && '--health-check' || '' }} ${{ inputs.try_windows && '--try-windows' || '' }}
+        run: python pigeon.py ${{ inputs.roll_call && '--roll-call' || '' }} ${{ inputs.test_coo && '--test-coo' || '' }} ${{ inputs.knock && format('--knock {0}', inputs.knock) || '' }} ${{ inputs.health_check && '--health-check' || '' }} ${{ inputs.try_windows && '--try-windows' || '' }} ${{ inputs.webhook && format('--webhook {0}', inputs.webhook) || '' }}
 
       - name: Save what the pigeon saw
         if: ${{ !cancelled() }}   # keep its health notes even when every window failed

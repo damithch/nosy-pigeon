@@ -59,6 +59,7 @@ Repo secrets (**Settings → Secrets and variables → Actions**):
 | Secret | Perch |
 |---|---|
 | `PIGEON_CONFIG` | the secret map (required) |
+| `GEMINI_API_KEY` | lets the oracle (Gemini) give second opinions and keep summaries (optional) |
 | `PIGEON_DB_URL` | Postgres connection string for the loft, its long-term memory (optional; see `loft/001_nest.sql`) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Telegram (home perch; several chat ids allowed, comma-separated) |
 | `DISCORD_WEBHOOK_URL` | Discord (optional) |
