@@ -8,10 +8,10 @@
    "sent": 0
   },
   "2026-10-28": {
-   "checks": 1890,
-   "errors": 18,
+   "checks": 1903,
+   "errors": 19,
    "new": 11,
-   "runs": 135,
+   "runs": 136,
    "sent": 6
   }
  },
@@ -52,11 +52,11 @@
    "ok": "2026-10-28"
   },
   "72c96e9636feaeb1d357": {
-   "f": 10,
+   "f": 11,
    "ok": "2026-10-28",
    "since": "Wed 28 Oct, 10:15 AM",
    "w": 1,
-   "why": "ConnectionError"
+   "why": "HTTPError"
   },
   "7b6e97452ac0d286f7e8": {
    "ok": "2026-10-28"
