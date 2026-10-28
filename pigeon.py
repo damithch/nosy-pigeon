@@ -643,6 +643,44 @@ def collect_pecks(cfg):
     return n
 
 
+GREETINGS = {
+    "browser": {"User-Agent": USER_AGENT, "Accept-Language": "en"},
+    "browser_full": {"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9",
+                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                     "Accept-Encoding": "gzip, deflate", "Upgrade-Insecure-Requests": "1"},
+    "feed_reader": {"User-Agent": "Mozilla/5.0 (compatible; Feedly/1.0; +http://www.feedly.com/fetcher.html)",
+                    "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8"},
+    "feedparser": {"User-Agent": "UniversalFeedParser/6.0 +https://github.com/kurtmckee/feedparser",
+                   "Accept": "application/atom+xml,application/rdf+xml,application/rss+xml,application/xml"},
+    "plain": {},
+}
+
+
+def knock(cfg, name):
+    """Diagnose a shut window: try a few greetings and URL variants, keep only status codes."""
+    from urllib.parse import urlsplit, urlunsplit
+    url = cfg["sources"][name]["url"]
+    parts = urlsplit(url)
+    host = parts.netloc
+    alt_host = host[4:] if host.startswith("www.") else "www." + host
+    urls = {"as_is": url, "other_host": urlunsplit(parts._replace(netloc=alt_host)),
+            "home": urlunsplit(parts._replace(path="/", query=""))}
+    out = {}
+    for un, u in urls.items():
+        for gn, g in GREETINGS.items():
+            try:
+                r = requests.get(u, headers=g, timeout=20)
+                server = r.headers.get("server", "")[:20]
+                out[f"{un}/{gn}"] = f"{r.status_code} {server} {len(r.content)}b"
+            except requests.RequestException as exc:
+                out[f"{un}/{gn}"] = type(exc).__name__
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if loft:
+        loft.note(f"knock:{name}", out)
+        loft.close()
+    print(f"knock {name}: {len(out)} tries stored")
+
+
 def practice_coo(cfg):
     """One harmless sample coo, stored in the loft so its buttons can be tried."""
     stamp = datetime.now(timezone.utc)
@@ -719,6 +757,7 @@ def main():
     ap.add_argument("--all", action="store_true", help="check every source now, ignoring intervals")
     ap.add_argument("--roll-call", action="store_true", help="send the list of watched places to Telegram and stop")
     ap.add_argument("--test-coo", action="store_true", help="send one practice coo with buttons and stop")
+    ap.add_argument("--knock", metavar="NAME", help="try a window with different greetings; store status codes in the loft")
     args = ap.parse_args()
     files = dict(f.split("=", 1) for f in args.file)
     verbose = args.verbose or args.dry_run
@@ -729,6 +768,9 @@ def main():
         return
     if args.test_coo:
         practice_coo(cfg)
+        return
+    if args.knock:
+        knock(cfg, args.knock)
         return
     if not (args.dry_run or args.seed):
         collect_pecks(cfg)
