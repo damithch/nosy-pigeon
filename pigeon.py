@@ -756,8 +756,12 @@ def main():
             if exc is not None:
                 failures += 1
                 # only the exception type: messages can contain the URL
-                print(f"window {i}: failed ({type(exc).__name__})", file=sys.stderr)
-                results[name] = (None, type(exc).__name__)
+                why = type(exc).__name__
+                code = getattr(getattr(exc, "response", None), "status_code", None)
+                if code:  # e.g. "HTTPError 403": the status code is safe to show
+                    why += f" {code}"
+                print(f"window {i}: failed ({why})", file=sys.stderr)
+                results[name] = (None, why)
                 continue
             print(f"window {i}: {len(found)} items")
             results[name] = (len(found), None)
