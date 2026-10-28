@@ -192,6 +192,7 @@ def read_rss(name, src, get):
         items.append({
             "id": entry.get("id") or entry.get("link"),
             "source": name,
+            "company": bool(src.get("company")),
             "title": title,
             "org": org,
             "place": place or src.get("place") or (strip_html(entry.get("description", "")).split(":", 1)[-1].strip()[:80] if labels else ""),
@@ -279,11 +280,89 @@ def read_smartrecruiters(name, src, get):
 
 def read_workday(name, src, get):
     host, tenant, site = src["host"], src["tenant"], src["site"]
-    body = {"limit": 20, "offset": 0, "searchText": src.get("search", ""), "appliedFacets": {}}
-    data = json.loads(get(f"https://{host}/wday/cxs/{tenant}/{site}/jobs", method="POST", json_body=body))
+    base = src.get("link_base", f"https://{host}/{site}")   # myworkdaysite.com hosts use /recruiting/<tenant>/<site>
+    posts, offset = [], 0
+    while True:  # Workday pages 20 at a time
+        body = {"limit": 20, "offset": offset, "searchText": src.get("search", ""), "appliedFacets": src.get("facets", {})}
+        data = json.loads(get(f"https://{host}/wday/cxs/{tenant}/{site}/jobs", method="POST", json_body=body))
+        page = data.get("jobPostings", [])
+        posts += page
+        offset += 20
+        if len(page) < 20 or offset >= min(int(data.get("total") or 0), int(src.get("max", 100))):
+            break
     return [new_item(name, src, id=f"wd:{j.get('externalPath')}", title=j.get("title", ""),
-                     link=f"https://{host}/{site}{j.get('externalPath', '')}", place=j.get("locationsText", ""))
-            for j in data.get("jobPostings", [])]
+                     link=f"{base}{j.get('externalPath', '')}", place=j.get("locationsText", ""))
+            for j in posts]
+
+
+def dig(obj, path):
+    """'data.jobs.0.title' -> value; '' -> obj. Lists of strings are joined."""
+    for part in [p for p in (path or "").split(".") if p]:
+        if isinstance(obj, list):
+            obj = obj[int(part)] if part.isdigit() and int(part) < len(obj) else None
+        elif isinstance(obj, dict):
+            obj = obj.get(part)
+        else:
+            return None
+    return obj
+
+
+def slugify(text):
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).lstrip("-")
+
+
+def fill(template, row):
+    """'https://x/jobs/{id}/{title|slug}' with values from the row (dot paths allowed)."""
+    def one(m):
+        path, _, how = m.group(1).partition("|")
+        val = dig(row, path)
+        val = "" if val is None else val
+        return slugify(val) if how == "slug" else str(val)
+    return re.sub(r"\{([^}]+)\}", one, template)
+
+
+def embedded_json(page, how):
+    """Job data that a page carries inside itself: Next.js, Inertia, or a hidden input."""
+    text = page.decode("utf-8", "replace") if isinstance(page, bytes) else page
+    if how == "next":
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', text, re.S)
+        return json.loads(m.group(1)) if m else {}
+    if how == "inertia":
+        m = re.search(r'data-page="([^"]+)"', text)
+        return json.loads(html.unescape(m.group(1))) if m else {}
+    if how.startswith("input:"):
+        m = re.search(rf'<input[^>]*\bid="{re.escape(how[6:])}"[^>]*>', text) or \
+            re.search(rf'<input[^>]*\bvalue="[^"]*"[^>]*\bid="{re.escape(how[6:])}"', text)
+        v = m and re.search(r'value="([^"]*)"', m.group(0))
+        return json.loads(html.unescape(v.group(1))) if v else []
+    raise ValueError(f"unknown embedded kind {how}")
+
+
+def read_json(name, src, get):
+    """Any JSON job feed. Config: url, method, body, items (path to the list), title, id,
+    link (field path) or link_template, place (path or template), published (path), kind (path)."""
+    raw = get(src["url"], method=src.get("method", "GET"), json_body=src.get("body"))
+    data = embedded_json(raw, src["embedded"]) if src.get("embedded") else json.loads(raw)
+    rows = dig(data, src.get("items", "")) or []
+    if isinstance(rows, dict):
+        rows = list(rows.values())
+    out = []
+    for r in rows:
+        title = dig(r, src.get("title", "title"))
+        if not title:
+            continue
+        link = fill(src["link_template"], r) if src.get("link_template") else dig(r, src.get("link", "url")) or ""
+        link = urljoin(src["url"], str(link)) if link else src.get("page", src["url"])
+        place = src.get("place_field") and (fill(src["place_field"], r) if "{" in src["place_field"]
+                                            else dig(r, src["place_field"]))
+        if isinstance(place, list):
+            place = ", ".join(str(x.get("name", x) if isinstance(x, dict) else x) for x in place)
+        rid = dig(r, src.get("id", "id")) or link or title
+        out.append(new_item(name, src, id=f"json:{name}:{rid}", title=strip_html(str(title)), link=link,
+                            place=str(place or ""), kind=str(dig(r, src["kind"]) or "") if src.get("kind") else "",
+                            published=iso(dig(r, src["published"])) if src.get("published") else None,
+                            body=strip_html(str(dig(r, src["body_field"]) or ""))[:3000] if src.get("body_field") else ""))
+    return out
 
 
 def read_recruiterbox(name, src, get):
@@ -372,9 +451,9 @@ def read_links(name, src, get):
 
 
 READERS = {"rss": read_rss, "table": read_table, "lever": read_lever, "workable": read_workable,
-           "smartrecruiters": read_smartrecruiters, "workday": read_workday, "recruiterbox": read_recruiterbox,
+           "smartrecruiters": read_smartrecruiters, "workday": read_workday, "recruiterbox": read_recruiterbox, "json": read_json,
            "jsonld": read_jsonld, "links": read_links}
-COMPANY_TYPES = {"lever", "workable", "smartrecruiters", "workday", "recruiterbox", "jsonld", "links"}
+COMPANY_TYPES = {"lever", "workable", "smartrecruiters", "workday", "recruiterbox", "json", "jsonld", "links"}
 
 
 def due(name, src, now_min):
