@@ -951,8 +951,11 @@ def set_webhook(cfg, on):
         ok = bool(res and res.get("ok"))
         if ok:
             loft.note("webhook", {"on": on, "at": datetime.now(timezone.utc).isoformat()})
+        time.sleep(3)
         info = tg(token, "getWebhookInfo") or {}
         r = info.get("result", {})
+        loft.note("webhook_info", {"ok": ok, "pending": r.get("pending_update_count"),
+                                   "last_error": r.get("last_error_message"), "url_set": bool(r.get("url"))})
         print(f"webhook {'on' if on else 'off'}: ok={ok} pending={r.get('pending_update_count')} "
               f"last_error={'yes' if r.get('last_error_message') else 'no'}")
     finally:
