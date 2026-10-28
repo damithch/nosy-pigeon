@@ -33,7 +33,7 @@ jobs:
         if: ${{ !inputs.tidy }}
         with:
           python-version: "3.12"
-      - run: pip install -q requests playwright && python -m playwright install --with-deps chromium
+      - run: pip install -q requests feedparser playwright && python -m playwright install --with-deps chromium
         if: ${{ !inputs.tidy }}
       - name: Check
         if: ${{ !inputs.tidy }}
