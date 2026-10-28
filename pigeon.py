@@ -770,6 +770,26 @@ def health_check(cfg):
     print(f"health check: {len(ok)} ok, {len(empty)} empty, {len(broken)} broken")
 
 
+def scheduled_health_check(cfg):
+    """Send the full health report at the configured local hours (default 8 am and 8 pm), once each."""
+    hours = sorted(int(h) for h in cfg.get("health_report_hours", [8, 20]))
+    now = local_now()
+    due = [h for h in hours if 0 <= now.hour - h < 2]   # within two hours of a report time
+    if not due:
+        return
+    slot = f"{now:%Y-%m-%d}T{due[-1]:02d}"
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if not loft:
+        return
+    try:
+        if loft.note("health_report_slot") == slot:
+            return
+        loft.note("health_report_slot", slot)   # claim the slot first, so a failure can't repeat it every run
+    finally:
+        loft.close()
+    health_check(cfg)
+
+
 def practice_coo(cfg):
     """One harmless sample coo, stored in the loft so its buttons can be tried."""
     stamp = datetime.now(timezone.utc)
@@ -991,6 +1011,8 @@ def main():
     if notes:
         print(f"{notes} health note(s)")
     remember(items)
+    if not args.seed:
+        scheduled_health_check(cfg)
     if args.seed:
         print(f"Remembered {len(new_fps)} items.")
     else:

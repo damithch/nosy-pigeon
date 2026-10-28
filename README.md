@@ -47,6 +47,7 @@ The pigeon keeps its rooftops secret. Its real map lives in a repo secret called
 - `warn_after`: how many failed visits in a row before the pigeon says a window is stuck (default 6)
 - `stale_days`: a nest that has gone quiet this many days gets a gentle note (default 7)
 - `summary_hour`: local hour after which yesterday's check-in is sent (default 8)
+- `health_report_hours`: local hours for the full 🩺 report on every window (default `[8, 20]`)
 
 A new window is learned quietly on its first visit, so adding one never floods the perch.
 
