@@ -110,8 +110,8 @@ def load_relay():
     if not loft:
         return []
     try:
-        found = [loft.note(k) for k in ("relay", "relay2", "relay3")]
-        return [r for r in found if r and r.get("url")]
+        found = [loft.note(k) for k in ("relay", "relay2", "relay3", "relay4")]
+        return [r for r in found if r and (r.get("url") or r.get("template"))]
     except Exception:
         return []
     finally:
@@ -119,6 +119,14 @@ def load_relay():
 
 
 SHUT = (403, 429, 503, 520, 521, 522, 523, 524, 525, 526)   # refused, rate-limited, or the shield in front failed
+
+
+def via_relay(relay, url):
+    """Ask one relay for a page. Own relays take ?k=&u=; public readers use a URL template."""
+    if relay.get("template"):
+        return requests.get(relay["template"].replace("{u}", url), headers=relay.get("headers") or {}, timeout=40)
+    return requests.get(relay["url"], params={"k": relay["key"], "u": url},
+                        headers=relay.get("headers") or {}, timeout=40)
 
 
 def fetch_or_relay(url, relays, method="GET", json_body=None, params=None, used=None):
@@ -134,9 +142,10 @@ def fetch_or_relay(url, relays, method="GET", json_body=None, params=None, used=
         last = exc
     for i, relay in enumerate(relays, 1):
         try:
-            resp = requests.get(relay["url"], params={"k": relay["key"], "u": url},
-                                headers=relay.get("headers") or {}, timeout=40)
+            resp = via_relay(relay, url)
             resp.raise_for_status()
+            if relay.get("expect") and relay["expect"] not in resp.text[:500]:
+                raise requests.HTTPError(f"relay {i} returned something else", response=resp)
             if used is not None:
                 used.append(i)
             return resp.content
@@ -800,9 +809,9 @@ def knock(cfg, name):
                 out[f"{un}/{gn}"] = type(exc).__name__
     for i, relay in enumerate(load_relay(), 1):   # and each relay
         try:
-            r = requests.get(relay["url"], params={"k": relay["key"], "u": url},
-                             headers=relay.get("headers") or {}, timeout=40)
-            out[f"relay{i}"] = f"{r.status_code} upstream={r.headers.get('X-Upstream-Status', '?')} {len(r.content)}b"
+            r = via_relay(relay, url)
+            head = re.sub(r"\s+", " ", r.text[:60])
+            out[f"relay{i}"] = f"{r.status_code} upstream={r.headers.get('X-Upstream-Status', '?')} {len(r.content)}b {head}"
         except requests.RequestException as exc:
             out[f"relay{i}"] = type(exc).__name__
     loft = Loft.open(os.getenv("PIGEON_DB_URL"))
