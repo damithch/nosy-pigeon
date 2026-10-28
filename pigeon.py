@@ -104,29 +104,45 @@ def fetch(url, method="GET", json_body=None, params=None):
 
 
 def load_relay():
-    """A helper on another network ({"url", "key"} kept in the loft), used when a site shuts its door."""
+    """Helpers on other networks (notes 'relay', 'relay2', ... in the loft: {"url", "key", "headers"}),
+    tried in order when a site shuts its door."""
     loft = Loft.open(os.getenv("PIGEON_DB_URL"))
     if not loft:
-        return None
+        return []
     try:
-        return loft.note("relay")
+        found = [loft.note(k) for k in ("relay", "relay2", "relay3")]
+        return [r for r in found if r and r.get("url")]
     except Exception:
-        return None
+        return []
     finally:
         loft.close()
 
 
-def fetch_or_relay(url, relay, method="GET", json_body=None, params=None):
-    """Fetch normally; if a plain GET is refused (403/429), ask the relay to fetch it instead."""
+SHUT = (403, 429, 503, 520, 521, 522, 523, 524, 525, 526)   # refused, rate-limited, or the shield in front failed
+
+
+def fetch_or_relay(url, relays, method="GET", json_body=None, params=None, used=None):
+    """Fetch normally; if a plain GET is refused or can't connect, ask each relay in turn."""
+    if isinstance(relays, dict):
+        relays = [relays]
     try:
         return fetch(url, method=method, json_body=json_body, params=params)
-    except requests.HTTPError as exc:
-        code = getattr(exc.response, "status_code", None)
-        if not relay or method != "GET" or params or code not in (403, 429):
+    except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as exc:
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+        if not relays or method != "GET" or params or (code is not None and code not in SHUT):
             raise
-    resp = requests.get(relay["url"], params={"k": relay["key"], "u": url}, timeout=40)
-    resp.raise_for_status()
-    return resp.content
+        last = exc
+    for i, relay in enumerate(relays, 1):
+        try:
+            resp = requests.get(relay["url"], params={"k": relay["key"], "u": url},
+                                headers=relay.get("headers") or {}, timeout=40)
+            resp.raise_for_status()
+            if used is not None:
+                used.append(i)
+            return resp.content
+        except requests.RequestException as exc:
+            last = exc
+    raise last
 
 
 def slug_title(url):
@@ -606,12 +622,13 @@ def update_health(cfg, labels, results, stats, send=True):
         empty_is_broken = src.get("expect_items", not is_company)
         if err is None and n == 0 and empty_is_broken:
             err = "empty page"
+        limit = int(src.get("warn_after") or (warn_after if is_company else cfg.get("board_warn_after", 2)))
         if err is not None:
             st["f"] = st.get("f", 0) + 1
             st.setdefault("since", stamp)
             st["why"] = err
-            if st["f"] == warn_after:
-                msgs.append(f"⚠️ <b>{label}</b> has failed {warn_after} checks in a row ({e(err)}), "
+            if st["f"] == limit:
+                msgs.append(f"⚠️ <b>{label}</b> has failed {limit} checks in a row ({e(err)}), "
                             f"since {st['since']}.\nNo alerts will come from it until it recovers. "
                             f"The site may be down or may have changed its layout.")
                 st["w"] = 1
@@ -642,7 +659,9 @@ def update_health(cfg, labels, results, stats, send=True):
         if y:
             names = [n for n, s in sources.items() if s.get("enabled", True)]
             broken = [labels.get(n, n) for n in names
-                      if src_state.get(fingerprint(f"health:{n}"), {}).get("f", 0) >= warn_after]
+                      if src_state.get(fingerprint(f"health:{n}"), {}).get("f", 0) >=
+                      int(sources[n].get("warn_after") or (warn_after if (sources[n]["type"] in COMPANY_TYPES
+                          or sources[n].get("company")) else cfg.get("board_warn_after", 2)))]
             day = datetime.strptime(yesterday, "%Y-%m-%d").strftime("%a %d %b")
             lines = [f"🐦 <b>Daily check-in</b> ({day})",
                      f"🔁 {y['runs']} runs, {y['checks']} window checks",
@@ -779,6 +798,13 @@ def knock(cfg, name):
                 out[f"{un}/{gn}"] = f"{r.status_code} {server} {len(r.content)}b"
             except requests.RequestException as exc:
                 out[f"{un}/{gn}"] = type(exc).__name__
+    for i, relay in enumerate(load_relay(), 1):   # and each relay
+        try:
+            r = requests.get(relay["url"], params={"k": relay["key"], "u": url},
+                             headers=relay.get("headers") or {}, timeout=40)
+            out[f"relay{i}"] = f"{r.status_code} upstream={r.headers.get('X-Upstream-Status', '?')} {len(r.content)}b"
+        except requests.RequestException as exc:
+            out[f"relay{i}"] = type(exc).__name__
     loft = Loft.open(os.getenv("PIGEON_DB_URL"))
     if loft:
         loft.note(f"knock:{name}", out)
@@ -821,17 +847,8 @@ def health_check(cfg):
         name, src = pair
         used_relay = []
 
-        def getter(url, method="GET", json_body=None, params=None):
-            try:
-                return fetch(url, method=method, json_body=json_body, params=params)
-            except requests.HTTPError as exc:
-                code = getattr(exc.response, "status_code", None)
-                if not relay or method != "GET" or params or code not in (403, 429):
-                    raise
-            used_relay.append(True)
-            resp = requests.get(relay["url"], params={"k": relay["key"], "u": url}, timeout=40)
-            resp.raise_for_status()
-            return resp.content
+        def getter(url, **kw):
+            return fetch_or_relay(url, relay, used=used_relay, **kw)
 
         t0 = time.time()
         try:
@@ -842,7 +859,7 @@ def health_check(cfg):
             code = getattr(getattr(exc, "response", None), "status_code", None)
             if code:
                 err += f" {code}"
-        return name, src, found, err, bool(used_relay), time.time() - t0
+        return name, src, found, err, (used_relay[-1] if used_relay else 0), time.time() - t0
 
     with ThreadPoolExecutor(8) as pool:
         rows = list(pool.map(check, sources))
@@ -851,7 +868,7 @@ def health_check(cfg):
     broken, empty, ok = [], [], []
     for name, src, found, err, via, secs in rows:
         label = e(src.get("label", name))
-        extra = " (via relay)" if via else ""
+        extra = f" (via relay {via})" if via else ""
         is_company = src["type"] in COMPANY_TYPES or src.get("company")
         if err:
             broken.append(f"❌ {label}: {e(err)}{extra}")
