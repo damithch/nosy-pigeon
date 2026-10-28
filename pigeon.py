@@ -928,8 +928,9 @@ def scheduled_health_check(cfg):
 
 # ---------- coo: Telegram talks to an always-on function instead of waiting for flights ----------
 
-def webhook_secret(token):
-    return hashlib.sha256(f"{token}:coo".encode()).hexdigest()[:48]
+def webhook_secret():
+    import secrets
+    return secrets.token_hex(24)
 
 
 def set_webhook(cfg, on):
@@ -940,21 +941,35 @@ def set_webhook(cfg, on):
     try:
         loft.note("people", cfg.get("people") or {})
         loft.note("buttons", {**DEFAULT_BUTTONS, **(cfg.get("buttons") or {})})
+        check = {}
         if on:
             url = (loft.note("coo") or {}).get("url")
             if not url:
                 sys.exit("no coo url in the loft")
-            res = tg(token, "setWebhook", url=url, secret_token=webhook_secret(token),
+            secret = webhook_secret()
+            loft.note("webhook", {"on": False, "secret": secret, "at": datetime.now(timezone.utc).isoformat()})
+            try:  # can coo answer Telegram? (its own copy of the bot token must work)
+                check = requests.get(url, params={"check": secret}, timeout=30).json()
+            except Exception as exc:
+                check = {"error": type(exc).__name__}
+            if not check.get("token_ok"):
+                loft.note("webhook_info", {"ok": False, "check": check})
+                tg(token, "deleteWebhook", drop_pending_updates=False)  # fall back to polling
+                loft.note("webhook", {"on": False, "secret": secret, "at": datetime.now(timezone.utc).isoformat()})
+                print(f"webhook not switched: coo can't use its bot token ({check})")
+                return
+            res = tg(token, "setWebhook", url=url, secret_token=secret,
                      allowed_updates=["callback_query", "message"], drop_pending_updates=False)
         else:
             res = tg(token, "deleteWebhook", drop_pending_updates=False)
         ok = bool(res and res.get("ok"))
         if ok:
-            loft.note("webhook", {"on": on, "at": datetime.now(timezone.utc).isoformat()})
+            prev = loft.note("webhook") or {}
+            loft.note("webhook", {**prev, "on": on, "at": datetime.now(timezone.utc).isoformat()})
         time.sleep(3)
         info = tg(token, "getWebhookInfo") or {}
         r = info.get("result", {})
-        loft.note("webhook_info", {"ok": ok, "pending": r.get("pending_update_count"),
+        loft.note("webhook_info", {"ok": ok, "check": check, "pending": r.get("pending_update_count"),
                                    "last_error": r.get("last_error_message"), "url_set": bool(r.get("url"))})
         print(f"webhook {'on' if on else 'off'}: ok={ok} pending={r.get('pending_update_count')} "
               f"last_error={'yes' if r.get('last_error_message') else 'no'}")
