@@ -103,6 +103,32 @@ def fetch(url, method="GET", json_body=None, params=None):
     return resp.content
 
 
+def load_relay():
+    """A helper on another network ({"url", "key"} kept in the loft), used when a site shuts its door."""
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if not loft:
+        return None
+    try:
+        return loft.note("relay")
+    except Exception:
+        return None
+    finally:
+        loft.close()
+
+
+def fetch_or_relay(url, relay, method="GET", json_body=None, params=None):
+    """Fetch normally; if a plain GET is refused (403/429), ask the relay to fetch it instead."""
+    try:
+        return fetch(url, method=method, json_body=json_body, params=params)
+    except requests.HTTPError as exc:
+        code = getattr(exc.response, "status_code", None)
+        if not relay or method != "GET" or params or code not in (403, 429):
+            raise
+    resp = requests.get(relay["url"], params={"k": relay["key"], "u": url}, timeout=40)
+    resp.raise_for_status()
+    return resp.content
+
+
 def slug_title(url):
     """'.../careers/283/2026-09-account-manager-sri-lanka' -> 'Account Manager Sri Lanka'"""
     seg = [x for x in urlparse(url).path.split("/") if x]
@@ -783,10 +809,12 @@ def main():
         if args.all or name in files or due(name, src, now_min):
             jobs.append((i, name, src))
 
+    relay = load_relay()
+
     def run(job):
         i, name, src = job
         local = files.get(name)
-        getter = (lambda url, **kw: fetch(local)) if local else fetch
+        getter = (lambda url, **kw: fetch(local)) if local else (lambda url, **kw: fetch_or_relay(url, relay, **kw))
         try:
             return i, name, [x for x in READERS[src["type"]](name, src, getter) if location_ok(x, src)], None
         except Exception as exc:  # one broken source shouldn't stop the others
