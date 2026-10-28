@@ -786,6 +786,32 @@ def knock(cfg, name):
     print(f"knock {name}: {len(out)} tries stored")
 
 
+def try_windows():
+    """Run the readers on candidate windows stored privately in the loft; store what they return."""
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if not loft:
+        sys.exit(f"needs the loft ({Loft.last_problem})")
+    cands = loft.note("candidates") or {}
+    relay = load_relay()
+
+    def one(pair):
+        name, src = pair
+        try:
+            found = [x for x in READERS[src["type"]](name, src, lambda u, **kw: fetch_or_relay(u, relay, **kw))
+                     if location_ok(x, src)]
+            return name, {"n": len(found), "sample": [[x["title"], x["place"], x["link"], str(x["published"] or "")]
+                                                      for x in found[:10]]}
+        except Exception as exc:
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            return name, {"error": f"{type(exc).__name__} {code or ''} {str(exc)[:200]}"}
+
+    with ThreadPoolExecutor(8) as pool:
+        out = dict(pool.map(one, cands.items()))
+    loft.note("candidates_result", {"at": datetime.now(timezone.utc).isoformat(), "results": out})
+    loft.close()
+    print(f"tried {len(out)} windows")
+
+
 def health_check(cfg):
     """Visit every enabled window once and report how each one is doing. Sends no coos, remembers nothing."""
     relay = load_relay()
@@ -945,6 +971,8 @@ def main():
     ap.add_argument("--all", action="store_true", help="check every source now, ignoring intervals")
     ap.add_argument("--roll-call", action="store_true", help="send the list of watched places to Telegram and stop")
     ap.add_argument("--test-coo", action="store_true", help="send one practice coo with buttons and stop")
+    ap.add_argument("--try-windows", action="store_true",
+                    help="test candidate windows kept in the loft (note 'candidates'); results go back to the loft")
     ap.add_argument("--health-check", action="store_true",
                     help="visit every window now, send a health report to Telegram, change nothing else")
     ap.add_argument("--knock", metavar="NAME", help="try a window with different greetings; store status codes in the loft")
@@ -964,6 +992,9 @@ def main():
         return
     if args.health_check:
         health_check(cfg)
+        return
+    if args.try_windows:
+        try_windows()
         return
     if not (args.dry_run or args.seed):
         collect_pecks(cfg)

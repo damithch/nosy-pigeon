@@ -19,6 +19,10 @@ on:
         description: Check every site now and send a health report to Telegram (sends no job alerts)
         type: boolean
         default: false
+      try_windows:
+        description: Test candidate windows kept in the loft (results go to the loft)
+        type: boolean
+        default: false
       knock:
         description: Diagnose one window by name (status codes go to the loft)
         type: string
@@ -56,7 +60,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           WHATSAPP_APIKEY: ${{ secrets.WHATSAPP_APIKEY }}
-        run: python pigeon.py ${{ inputs.roll_call && '--roll-call' || '' }} ${{ inputs.test_coo && '--test-coo' || '' }} ${{ inputs.knock && format('--knock {0}', inputs.knock) || '' }} ${{ inputs.health_check && '--health-check' || '' }}
+        run: python pigeon.py ${{ inputs.roll_call && '--roll-call' || '' }} ${{ inputs.test_coo && '--test-coo' || '' }} ${{ inputs.knock && format('--knock {0}', inputs.knock) || '' }} ${{ inputs.health_check && '--health-check' || '' }} ${{ inputs.try_windows && '--try-windows' || '' }}
 
       - name: Save what the pigeon saw
         if: ${{ !cancelled() }}   # keep its health notes even when every window failed
