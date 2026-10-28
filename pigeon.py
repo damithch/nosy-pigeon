@@ -404,7 +404,7 @@ def matches(item, cfg):
 # Which crumbs to open first. Overridable with "rank": {"3": [...], "2": [...]} in the config.
 DEFAULT_RANK = {
     "3": ["devops", "sre", "site reliability", "cloud", "platform engineer", "infrastructure", "devsecops",
-          "mlops", "kubernetes", "aws", "azure", "gcp", "techops"],
+          "mlops", "kubernetes", "aws", "azure", "gcp", "techops", "platform", "security engineer"],
     "2": ["software engineer", "software developer", "software engineering", "developer", "backend", "back-end",
           "full stack", "full-stack", "fullstack", "frontend", "front-end", "ai", "ml", "ai/ml",
           "machine learning", "llm", "generative ai", "data engineer", "data scientist", "web", "mobile"],
