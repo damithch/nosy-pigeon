@@ -1242,6 +1242,10 @@ def main():
         return
     if not (args.dry_run or args.seed):
         collect_pecks(cfg)
+    start, end = (int(h) for h in cfg.get("quiet_hours", [1, 6]))
+    if start != end and not (args.all or files) and start <= local_now().hour < end:
+        print("quiet hours: the pigeon rests")
+        return
     labels, now_min = {}, int(time.time() // 60)
     jobs = []
     for i, (name, src) in enumerate(cfg.get("sources", {}).items(), 1):
