@@ -707,6 +707,69 @@ def knock(cfg, name):
     print(f"knock {name}: {len(out)} tries stored")
 
 
+def health_check(cfg):
+    """Visit every enabled window once and report how each one is doing. Sends no coos, remembers nothing."""
+    relay = load_relay()
+    sources = [(n, s) for n, s in cfg.get("sources", {}).items() if s.get("enabled", True)]
+
+    def check(pair):
+        name, src = pair
+        used_relay = []
+
+        def getter(url, method="GET", json_body=None, params=None):
+            try:
+                return fetch(url, method=method, json_body=json_body, params=params)
+            except requests.HTTPError as exc:
+                code = getattr(exc.response, "status_code", None)
+                if not relay or method != "GET" or params or code not in (403, 429):
+                    raise
+            used_relay.append(True)
+            resp = requests.get(relay["url"], params={"k": relay["key"], "u": url}, timeout=40)
+            resp.raise_for_status()
+            return resp.content
+
+        t0 = time.time()
+        try:
+            found = [x for x in READERS[src["type"]](name, src, getter) if location_ok(x, src)]
+            err = None
+        except Exception as exc:
+            found, err = None, type(exc).__name__
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            if code:
+                err += f" {code}"
+        return name, src, found, err, bool(used_relay), time.time() - t0
+
+    with ThreadPoolExecutor(8) as pool:
+        rows = list(pool.map(check, sources))
+
+    e = html.escape
+    broken, empty, ok = [], [], []
+    for name, src, found, err, via, secs in rows:
+        label = e(src.get("label", name))
+        extra = " (via relay)" if via else ""
+        is_company = src["type"] in COMPANY_TYPES or src.get("company")
+        if err:
+            broken.append(f"❌ {label}: {e(err)}{extra}")
+        elif not found and not is_company:
+            broken.append(f"❌ {label}: page loaded but 0 posts (layout may have changed){extra}")
+        elif not found:
+            empty.append(f"➖ {label}: no posts right now{extra}")
+        else:
+            ok.append(f"✅ {label}: {len(found)} posts, {secs:.1f}s{extra}")
+    when = local_now().strftime("%a %d %b, %I:%M %p")
+    lines = [f"🩺 <b>Health check</b> ({when})",
+             f"{len(ok)} working · {len(empty)} empty · {len(broken)} broken", ""]
+    lines += broken + ([""] if broken else []) + ok + ([""] if empty else []) + empty
+    notify("\n".join(lines))
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if loft:
+        loft.note("health_check", {"at": datetime.now(timezone.utc).isoformat(),
+                                   "rows": [{"window": n, "items": None if f is None else len(f), "error": er,
+                                             "relay": v, "secs": round(t, 1)} for n, _, f, er, v, t in rows]})
+        loft.close()
+    print(f"health check: {len(ok)} ok, {len(empty)} empty, {len(broken)} broken")
+
+
 def practice_coo(cfg):
     """One harmless sample coo, stored in the loft so its buttons can be tried."""
     stamp = datetime.now(timezone.utc)
@@ -783,6 +846,8 @@ def main():
     ap.add_argument("--all", action="store_true", help="check every source now, ignoring intervals")
     ap.add_argument("--roll-call", action="store_true", help="send the list of watched places to Telegram and stop")
     ap.add_argument("--test-coo", action="store_true", help="send one practice coo with buttons and stop")
+    ap.add_argument("--health-check", action="store_true",
+                    help="visit every window now, send a health report to Telegram, change nothing else")
     ap.add_argument("--knock", metavar="NAME", help="try a window with different greetings; store status codes in the loft")
     args = ap.parse_args()
     files = dict(f.split("=", 1) for f in args.file)
@@ -797,6 +862,9 @@ def main():
         return
     if args.knock:
         knock(cfg, args.knock)
+        return
+    if args.health_check:
+        health_check(cfg)
         return
     if not (args.dry_run or args.seed):
         collect_pecks(cfg)
