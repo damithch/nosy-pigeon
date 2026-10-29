@@ -145,7 +145,9 @@ def fetch_or_relay(url, relays, method="GET", json_body=None, params=None, used=
         try:
             resp = via_relay(relay, url)
             resp.raise_for_status()
-            if relay.get("expect") and relay["expect"] not in resp.text[:500]:
+            checked = relay.get("expect_hosts")   # the content check is only meant for some sites
+            if relay.get("expect") and (not checked or any(h in url for h in checked)) \
+                    and relay["expect"] not in resp.text[:500]:
                 raise requests.HTTPError(f"relay {i} returned something else", response=resp)
             if used is not None:
                 used.append(i)
