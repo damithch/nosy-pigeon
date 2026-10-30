@@ -15,10 +15,10 @@
    "sent": 10
   },
   "2026-10-30": {
-   "checks": 858,
-   "errors": 0,
+   "checks": 865,
+   "errors": 1,
    "new": 257,
-   "runs": 184,
+   "runs": 185,
    "sent": 9
   }
  },
@@ -106,7 +106,10 @@
    "ok": "2026-10-30"
   },
   "d81b569af7dcdea832f6": {
-   "ok": "2026-10-30"
+   "f": 1,
+   "ok": "2026-10-30",
+   "since": "Fri 30 Oct, 08:01 PM",
+   "why": "JSONDecodeError"
   },
   "dcd479ea48cde6c42419": {
    "ok": "2026-10-30"
