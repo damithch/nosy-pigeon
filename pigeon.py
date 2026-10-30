@@ -582,7 +582,12 @@ def telegram_text(token, chat, text, markup=None):
             ok_any = True
         else:  # recipient number only, never the id: logs are public
             print(f"  telegram recipient {i + 1}: HTTP {r.status_code}", file=sys.stderr)
+        SEND_LOG.append((i + 1, r.status_code, "" if r.ok else (r.json().get("description", "")[:80] if r.headers.get(
+            "content-type", "").startswith("application/json") else "")))
     return ok_any
+
+
+SEND_LOG = []   # (recipient number, status, Telegram's reason) for this run; kept in the loft for diagnosis
 
 
 def roll_call(cfg):
@@ -1388,6 +1393,16 @@ def main():
     if args.dry_run:
         print(f"[dry run] {len(items)} items, {matched} would be sent.")
         return
+    if SEND_LOG:
+        lf = Loft.open(os.getenv("PIGEON_DB_URL"))
+        if lf:
+            try:
+                lf.note("send_log", {"at": datetime.now(timezone.utc).isoformat(),
+                                     "recipients": len([c for c in (os.getenv("TELEGRAM_CHAT_ID") or "").split(",") if c.strip()]),
+                                     "results": SEND_LOG[-12:]})
+            except Exception:
+                pass
+            lf.close()
     SEEN_PATH.write_text(json.dumps((seen + new_fps)[-SEEN_LIMIT:], indent=0) + "\n", encoding="utf-8")
     stats.update(new=fresh_posts, sent=sent)
     notes = update_health(cfg, labels, results, stats, send=not args.seed)
