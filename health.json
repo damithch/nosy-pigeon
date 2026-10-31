@@ -15,10 +15,10 @@
    "sent": 10
   },
   "2026-10-31": {
-   "checks": 430,
-   "errors": 3,
+   "checks": 436,
+   "errors": 4,
    "new": 7,
-   "runs": 92,
+   "runs": 93,
    "sent": 3
   }
  },
@@ -87,10 +87,10 @@
    "ok": "2026-10-31"
   },
   "7b6e97452ac0d286f7e8": {
-   "f": 1,
+   "f": 2,
    "ok": "2026-10-31",
    "since": "Sat 31 Oct, 11:35 AM",
-   "why": "HTTPError 502"
+   "why": "JSONDecodeError"
   },
   "861a7bcc19a0ae9bf6b5": {
    "ok": "2026-10-31"
