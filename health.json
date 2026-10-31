@@ -15,10 +15,10 @@
    "sent": 10
   },
   "2026-10-31": {
-   "checks": 396,
+   "checks": 403,
    "errors": 2,
-   "new": 2,
-   "runs": 85,
+   "new": 3,
+   "runs": 86,
    "sent": 0
   }
  },
