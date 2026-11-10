@@ -94,12 +94,12 @@ def contains_any(text, words):
     return hits
 
 
-def fetch(url, method="GET", json_body=None, params=None):
+def fetch(url, method="GET", json_body=None, params=None, headers=None):
     """HTTP or a local file path (for offline tests). Returns bytes."""
     if url and Path(url).exists():
         return Path(url).read_bytes()
     resp = requests.request(method, url, json=json_body, params=params, timeout=20,
-                            headers={"User-Agent": USER_AGENT, "Accept-Language": "en"})
+                            headers=headers if headers is not None else {"User-Agent": USER_AGENT, "Accept-Language": "en"})
     resp.raise_for_status()
     return resp.content
 
@@ -138,9 +138,20 @@ def fetch_or_relay(url, relays, method="GET", json_body=None, params=None, used=
         return fetch(url, method=method, json_body=json_body, params=params)
     except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as exc:
         code = getattr(getattr(exc, "response", None), "status_code", None)
-        if not relays or method != "GET" or params or (code is not None and code not in SHUT):
+        if method != "GET" or params or (code is not None and code not in SHUT):
             raise
         last = exc
+    # some shields only dislike browser-looking visitors from data centres: knock plainly first
+    for greeting in ({}, {"User-Agent": "UniversalFeedParser/6.0 +https://github.com/kurtmckee/feedparser"}):
+        try:
+            body = fetch(url, headers=greeting)
+            if used is not None:
+                used.append(0)
+            return body
+        except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as exc:
+            last = exc
+    if not relays:
+        raise last
     for i, relay in enumerate(relays, 1):
         try:
             resp = via_relay(relay, url)
