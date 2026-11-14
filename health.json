@@ -15,10 +15,10 @@
    "sent": 6
   },
   "2026-11-14": {
-   "checks": 184,
-   "errors": 6,
+   "checks": 188,
+   "errors": 7,
    "new": 0,
-   "runs": 37,
+   "runs": 38,
    "sent": 0
   }
  },
@@ -132,7 +132,7 @@
    "ok": "2026-11-14"
   },
   "f0a887fe132af1dd7353": {
-   "f": 2,
+   "f": 3,
    "ok": "2026-11-14",
    "since": "Sat 14 Nov, 06:05 AM",
    "why": "HTTPError 404"
