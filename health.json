@@ -15,10 +15,10 @@
    "sent": 6
   },
   "2026-11-14": {
-   "checks": 550,
-   "errors": 21,
+   "checks": 554,
+   "errors": 22,
    "new": 2,
-   "runs": 112,
+   "runs": 113,
    "sent": 1
   }
  },
@@ -93,10 +93,10 @@
    "ok": "2026-11-14"
   },
   "866af4ab02546a53229a": {
-   "f": 8,
+   "f": 9,
    "since": "Sat 14 Nov, 06:15 AM",
    "w": 1,
-   "why": "HTTPError 521"
+   "why": "JSONDecodeError"
   },
   "8c81aa7b2f358d0a366b": {
    "ok": "2026-11-14"
