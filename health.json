@@ -15,10 +15,10 @@
    "sent": 6
   },
   "2026-11-14": {
-   "checks": 137,
-   "errors": 5,
+   "checks": 142,
+   "errors": 6,
    "new": 0,
-   "runs": 28,
+   "runs": 29,
    "sent": 0
   }
  },
@@ -98,7 +98,7 @@
    "ok": "2026-11-14"
   },
   "8e68a5fac52ba4a6db77": {
-   "f": 1,
+   "f": 2,
    "ok": "2026-11-14",
    "since": "Sat 14 Nov, 06:20 AM",
    "why": "HTTPError 521"
