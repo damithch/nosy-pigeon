@@ -84,11 +84,11 @@ class Loft:
                     done.add(it["_fp"])
                     rows.append((it["_fp"], it["source"], it["title"][:500], it.get("org"), it.get("place"),
                                  it.get("kind"), it.get("link"), it.get("published"), it.get("_liked"),
-                                 it.get("_stars"), it.get("_tags"), it.get("_cooed")))
+                                 it.get("_stars"), it.get("_tags"), it.get("_cooed"), it.get("_closes")))
                 cur.executemany(
                     """insert into pigeon.crumbs (fp, window_key, title, org, place, kind, link, published_at,
-                                                 liked, stars, tags, cooed_at)
-                       values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                                 liked, stars, tags, cooed_at, closes_on)
+                       values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                        on conflict (fp) do update set
                          last_seen_at = now(),
                          title = excluded.title, org = excluded.org, place = excluded.place,
@@ -97,7 +97,8 @@ class Loft:
                          liked = coalesce(excluded.liked, crumbs.liked),
                          stars = coalesce(excluded.stars, crumbs.stars),
                          tags = coalesce(excluded.tags, crumbs.tags),
-                         cooed_at = coalesce(crumbs.cooed_at, excluded.cooed_at)""",
+                         cooed_at = coalesce(crumbs.cooed_at, excluded.cooed_at),
+                         closes_on = coalesce(excluded.closes_on, crumbs.closes_on)""",
                     rows)
             print(f"loft: stored {len(results)} visits, {len(rows)} crumbs")
             return True
@@ -166,6 +167,46 @@ class Loft:
                                on conflict (fp) do update set fit = excluded.fit, stars = excluded.stars,
                                  reason = excluded.reason, at = now()""",
                             [(fp, fit, st, rs, fp) for fp, fit, st, rs in rows])
+
+    # ---- following up: repeats, how applications went, windows about to close ----
+
+    def recently_cooed(self, days=30):
+        """[(title, org, window_key, cooed_at)] of crumbs sent in the last `days`, to spot a post coming round again."""
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("""select title, org, window_key, cooed_at from pigeon.crumbs
+                           where cooed_at > now() - make_interval(days => %s) and window_key <> 'practice'""", (days,))
+            return cur.fetchall()
+
+    def quiet_applications(self, after_days=10, forget_days=45, per_person=3):
+        """Applications still marked 'applied' with no word for a while: [{id, fp, who, title, org, applied_at}]."""
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("""select id, fp, who, title, org, applied_at from (
+                             select a.*, row_number() over (partition by who order by applied_at) as n
+                             from pigeon.applications a
+                             where status = 'applied'
+                               and coalesce(nudged_at, applied_at) < now() - make_interval(days => %s)
+                               and applied_at > now() - make_interval(days => %s)) q
+                           where n <= %s order by who, applied_at""", (after_days, forget_days, per_person))
+            cols = [d.name for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def nudged(self, app_ids):
+        if not app_ids:
+            return
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("update pigeon.applications set nudged_at = now() where id = any(%s)", (list(app_ids),))
+
+    def closing_on(self, day):
+        """Sent crumbs closing on `day` that an active perch hasn't pecked: [{who, title, org, link}]."""
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute("""select w.who, c.title, c.org, c.link
+                           from pigeon.crumbs c
+                           cross join (select distinct who from pigeon.pecks) w
+                           where c.closes_on = %s and c.cooed_at is not null and c.window_key <> 'practice'
+                             and not exists (select 1 from pigeon.pecks p where p.fp = c.fp and p.who = w.who)
+                           order by w.who, c.stars desc nulls last, c.cooed_at""", (day,))
+            cols = [d.name for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
 
     def note(self, key, value=None):
         """Read (value=None) or write a small JSON note."""

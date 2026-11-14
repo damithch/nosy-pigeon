@@ -545,22 +545,55 @@ def matches(item, cfg):
 
 # ---------- notifiers ----------
 
-# Which crumbs to open first. Overridable with "rank": {"3": [...], "2": [...]} in the config.
+# Which crumbs to open first. Tuned on which crumbs were actually pecked (Nov 2026: 83% / 49% / 10% for 3 / 2 / 1).
+# Overridable with "rank": {"junior": [...], "focus": [...], "core": [...], "down": [...]} in the config.
 DEFAULT_RANK = {
-    "3": ["devops", "sre", "site reliability", "cloud", "platform engineer", "infrastructure", "devsecops",
-          "mlops", "kubernetes", "aws", "azure", "gcp", "techops", "platform", "security engineer"],
-    "2": ["software engineer", "software developer", "software engineering", "developer", "backend", "back-end",
-          "full stack", "full-stack", "fullstack", "frontend", "front-end", "ai", "ml", "ai/ml",
-          "machine learning", "llm", "generative ai", "data engineer", "data scientist", "web", "mobile"],
+    # early-career wording
+    "junior": ["intern", "interns", "internship", "trainee", "junior", "associate", "graduate", "graduates",
+               "fresher", "freshers", "entry level", "entry-level"],
+    # the preferred direction
+    "focus": ["devops", "sre", "site reliability", "cloud", "platform", "infrastructure", "devsecops", "mlops",
+              "kubernetes", "techops"],
+    # building software in general
+    "core": ["software", "developer", "developers", "full stack", "full-stack", "fullstack", "backend", "back-end",
+             "frontend", "front-end", "web", "mobile", "ai", "ml", "ai/ml", "machine learning", "llm", "generative ai",
+             "android", "ios", "flutter", "react", "next.js", "nextjs", "java", "python"],
+    # wording on crumbs that mostly get skipped: other tracks, senior-ish titles, odd hours, overseas
+    "down": ["qa", "quality", "support", "business", "sme", "uae", "shift", "specialist", "manager", "administrator",
+             "admin", "executive", "wordpress", "data", "analyst", "talent", "content", "customer", "implementation",
+             "security", "network", "senior"],
 }
 
 
 def stars(item, cfg):
-    rank = cfg.get("rank") or DEFAULT_RANK
-    for n in ("3", "2"):
-        if contains_any(item["title"], rank.get(n, [])):
-            return int(n)
-    return 1
+    rank = {**DEFAULT_RANK, **{k: v for k, v in (cfg.get("rank") or {}).items() if k in DEFAULT_RANK}}
+    title = item["title"]
+    if contains_any(title, rank["down"]):
+        return 1
+    builds = contains_any(title, rank["focus"]) or contains_any(title, rank["core"])
+    if builds and contains_any(title, rank["junior"]):
+        return 3
+    return 2 if builds else 1
+
+
+def same_post_key(title, org):
+    """The same advert tends to come round again (re-posted, or on two boards): same title at the same place."""
+    org = re.sub(r"\b(pvt|private|ltd|limited|plc|inc|llc|co|company|sri lanka|lanka)\b", " ", (org or "").lower())
+    org = re.sub(r"[^a-z0-9]+", "", org)
+    title = re.sub(r"\s+-\s+colombo\s*\d*\s*$", "", (title or "").lower())
+    title = re.sub(r"[^a-z0-9]+", "", title)
+    return f"{title}|{org}" if title and org else ""
+
+
+def closes_on(text):
+    """'Sat Nov 21 2026' or '2026-11-21' -> date, else None."""
+    text = (text or "").strip()
+    for fmt, n in (("%a %b %d %Y", None), ("%Y-%m-%d", 10)):
+        try:
+            return datetime.strptime(text[:n] if n else text, fmt).date()
+        except ValueError:
+            pass
+    return None
 
 
 def message_lines(item, tags, label, bold):
@@ -576,6 +609,8 @@ def message_lines(item, tags, label, bold):
     elif item["published"]:
         lines.append(f"🕒 {(item['published'] + LOCAL_TZ).strftime('%a %d %b, %I:%M %p')}")
     lines.append(f"🌐 {label}")
+    if item.get("_again"):
+        lines.append(f"🔁 Posted again (first sent {(item['_again'] + LOCAL_TZ).strftime('%d %b')})")
     if item.get("_reason"):
         lines.append(("❓ Not sure: " if item.get("_fit") == "maybe" else "💡 ") + item["_reason"])
     return lines
@@ -1153,6 +1188,57 @@ def second_opinion(items, cfg, labels):
     return out
 
 
+STATUS_WORDS = {"i": "🎤 Interview", "o": "🎉 Offer", "r": "❌ Rejected"}
+
+
+def follow_ups(cfg):
+    """Once an evening: ask how older applications went, and point out sent crumbs that close tomorrow."""
+    now = local_now()
+    if now.hour < int(cfg.get("follow_up_hour", 18)):
+        return
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    loft = Loft.open(os.getenv("PIGEON_DB_URL"))
+    if not (token and loft):
+        return
+    e = html.escape
+    try:
+        slot = f"{now:%Y-%m-%d}"
+        if loft.note("follow_up_slot") == slot:
+            return
+        loft.note("follow_up_slot", slot)   # claim first, so a failure can't repeat it every run
+        chats = {name: chat for chat, name in (cfg.get("people") or {}).items()}
+
+        asked = []
+        for app in loft.quiet_applications(int(cfg.get("nudge_after_days", 10)), per_person=int(cfg.get("nudges_per_day", 3))):
+            chat = chats.get(app["who"])
+            if not chat:
+                continue
+            days = (datetime.now(timezone.utc) - app["applied_at"]).days
+            keys = [[{"text": w, "callback_data": f"s:{k}:{app['fp']}"} for k, w in STATUS_WORDS.items()],
+                    [{"text": "⏳ Still waiting", "callback_data": f"s:w:{app['fp']}"}]]
+            if telegram_text(token, chat, f"📮 You applied to <b>{e(app['title'])}</b> at {e(app['org'] or '—')} "
+                                          f"{days} days ago.\nAny news?", {"inline_keyboard": keys}):
+                asked.append(app["id"])
+        loft.nudged(asked)
+
+        closing = {}
+        for row in loft.closing_on((now + timedelta(days=1)).date()):
+            closing.setdefault(row["who"], []).append(row)
+        for who, rows in closing.items():
+            chat = chats.get(who)
+            if not chat:
+                continue
+            lines = [f"⏳ <b>Closing tomorrow</b> ({len(rows)} you haven't answered)"]
+            lines += [f'• <a href="{e(r["link"] or "")}">{e(r["title"])}</a> – {e(r["org"] or "—")}' for r in rows[:8]]
+            telegram_text(token, chat, "\n".join(lines))
+        if asked or closing:
+            print(f"follow-ups: {len(asked)} asked, {sum(len(v) for v in closing.values())} closing")
+    except Exception as exc:
+        print(f"follow-ups: failed ({type(exc).__name__})", file=sys.stderr)
+    finally:
+        loft.close()
+
+
 def practice_coo(cfg):
     """One harmless sample coo, stored in the loft so its buttons can be tried."""
     stamp = datetime.now(timezone.utc)
@@ -1304,6 +1390,7 @@ def main():
     stats = {"checks": len(jobs), "errors": failures}
     for item in items:
         item["_fp"] = fingerprint(item["id"])
+        item["_closes"] = closes_on(item.get("closing"))
     windows = {n: (labels[n], s["type"]) for n, s in cfg.get("sources", {}).items() if n in labels}
 
     def remember(stored_items):
@@ -1351,8 +1438,40 @@ def main():
         print(f"{len(fresh)} new window(s): remembered {learned} items quietly")
 
     items.sort(key=lambda x: x["published"] or datetime.min.replace(tzinfo=timezone.utc))
-    sent, matched, fresh_posts = 0, 0, 0
+    sent, matched, fresh_posts, repeats = 0, 0, 0, 0
     maybes = []
+    told = None   # same-post key -> (windows it came from, when first sent); fetched only if something matches
+
+    def already_told(item):
+        """True when this very post already went out from another window (two boards carry the same advert).
+        A re-post in the same window still goes out, marked as seen before."""
+        nonlocal told
+        days = int(cfg.get("repeat_days", 21))
+        if told is None:
+            told = {}
+            lf = Loft.open(os.getenv("PIGEON_DB_URL")) if days else None
+            if lf:
+                try:
+                    for t, o, w, at in sorted(lf.recently_cooed(days), key=lambda r: r[3]):
+                        told.setdefault(same_post_key(t, o), (set(), at))[0].add(w)
+                except Exception as exc:
+                    print(f"repeats: not checked ({type(exc).__name__})", file=sys.stderr)
+                finally:
+                    lf.close()
+            told.pop("", None)
+        key = same_post_key(item["title"], item["org"])
+        if not key or not days:
+            return False
+        before = told.get(key)
+        if before is None:
+            told[key] = ({item["source"]}, datetime.now(timezone.utc))
+            return False
+        if item["source"] in before[0]:
+            item["_again"] = before[1]
+            return False
+        before[0].add(item["source"])
+        return True
+
     for item in items:
         fp = fingerprint(item["id"])
         if fp in seen_set:
@@ -1372,6 +1491,10 @@ def main():
         if verbose:
             print(f"  MATCH {'*' * item['stars']} [{labels[item['source']]}] {item['title']} - {item['org']} [{item['place'] or '-'}] {', '.join(tags)}")
         if args.dry_run:
+            continue
+        if already_told(item):   # the same post again (re-posted, or on another board): stay quiet
+            new_fps.append(fp)
+            repeats += 1
             continue
         label = labels[item["source"]]
         if any([send_telegram(item, tags, label, cfg), send_discord(item, tags, label), send_whatsapp(item, tags, label)]):
@@ -1393,11 +1516,16 @@ def main():
             print(f"  ORACLE {fit} {'*' * st} [{labels[item['source']]}] {item['title']} - {item['org']}")
         if args.dry_run:
             continue
+        if already_told(item):
+            repeats += 1
+            continue
         label = labels[item["source"]]
         if any([send_telegram(item, [], label, cfg), send_discord(item, [], label), send_whatsapp(item, [], label)]):
             sent += 1
             item["_cooed"] = datetime.now(timezone.utc)
             time.sleep(1)
+    if repeats:
+        print(f"repeats: {repeats} kept quiet")
     if opinions:
         print(f"oracle: {len(maybes)} asked, {sum(1 for f, _, _ in opinions.values() if f != 'no')} kept")
 
@@ -1432,6 +1560,7 @@ def main():
     if not args.seed:
         scheduled_health_check(cfg)
         summarise_applications(cfg)
+        follow_ups(cfg)
     if args.seed:
         print(f"Remembered {len(new_fps)} items.")
     else:
