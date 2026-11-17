@@ -15,10 +15,10 @@
    "sent": 19
   },
   "2026-11-17": {
-   "checks": 251,
-   "errors": 12,
-   "new": 4,
-   "runs": 51,
+   "checks": 255,
+   "errors": 13,
+   "new": 5,
+   "runs": 52,
    "sent": 1
   }
  },
@@ -94,8 +94,9 @@
    "ok": "2026-11-17"
   },
   "866af4ab02546a53229a": {
-   "f": 5,
+   "f": 6,
    "since": "Mon 16 Nov, 11:15 PM",
+   "w": 1,
    "why": "HTTPError 429"
   },
   "8c81aa7b2f358d0a366b": {
