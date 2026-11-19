@@ -15,10 +15,10 @@
    "sent": 7
   },
   "2026-11-19": {
-   "checks": 693,
-   "errors": 37,
+   "checks": 699,
+   "errors": 38,
    "new": 37,
-   "runs": 141,
+   "runs": 142,
    "sent": 13
   }
  },
@@ -84,11 +84,11 @@
    "ok": "2026-11-19"
   },
   "7b6e97452ac0d286f7e8": {
-   "f": 61,
+   "f": 62,
    "ok": "2026-11-16",
    "since": "Mon 16 Nov, 12:35 PM",
    "w": 1,
-   "why": "ConnectTimeout"
+   "why": "HTTPError 429"
   },
   "861a7bcc19a0ae9bf6b5": {
    "ok": "2026-11-19"
