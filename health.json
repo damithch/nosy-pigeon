@@ -15,10 +15,10 @@
    "sent": 10
   },
   "2026-11-21": {
-   "checks": 650,
-   "errors": 35,
+   "checks": 654,
+   "errors": 36,
    "new": 7,
-   "runs": 132,
+   "runs": 133,
    "sent": 1
   }
  },
@@ -50,9 +50,10 @@
    "ok": "2026-11-21"
   },
   "3df661f565257fd95899": {
-   "f": 1,
+   "f": 2,
    "ok": "2026-11-21",
    "since": "Sat 21 Nov, 03:51 PM",
+   "w": 1,
    "why": "ChunkedEncodingError"
   },
   "4487da64c406508f652f": {
