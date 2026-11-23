@@ -15,11 +15,11 @@
    "sent": 0
   },
   "2026-11-23": {
-   "checks": 416,
+   "checks": 423,
    "errors": 21,
-   "new": 7,
-   "runs": 85,
-   "sent": 1
+   "new": 8,
+   "runs": 86,
+   "sent": 2
   }
  },
  "loft": "ok",
