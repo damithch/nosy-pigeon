@@ -15,10 +15,10 @@
    "sent": 5
   },
   "2026-11-28": {
-   "checks": 553,
-   "errors": 7,
+   "checks": 557,
+   "errors": 8,
    "new": 5,
-   "runs": 107,
+   "runs": 108,
    "sent": 1
   }
  },
@@ -62,7 +62,7 @@
    "ok": "2026-11-28"
   },
   "4f81346de137751a7948": {
-   "f": 1,
+   "f": 2,
    "ok": "2026-11-28",
    "since": "Sat 28 Nov, 12:50 PM",
    "why": "JSONDecodeError"
